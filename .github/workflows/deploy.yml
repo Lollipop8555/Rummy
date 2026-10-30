@@ -1,0 +1,56 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # 质量门禁：类型 → 静态检查 → 单元测试 → E2E，任一失败即阻断部署
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
+
+      # E2E 需要浏览器二进制
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+      - run: npm run build
+        env:
+          # 子路径部署，与仓库名一致；自定义域名时可用 repository variable 覆盖
+          VITE_BASE: /${{ github.event.repository.name }}/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
