@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="felt" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d4a38"/>
+      <stop offset="1" stop-color="#072a20"/>
+    </linearGradient>
+    <!--
+      投影：让后牌从背景与前景牌中「浮」出来。
+      用传统 filter primitives 而非 feDropShadow —— 后者是 SVG2/filter-effects 简写，
+      部分系统图标渲染器（老 WebView、缓存式预览）不认，会静默丢阴影。
+    -->
+    <filter id="lift" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1.2" result="blur"/>
+      <feOffset in="blur" dx="0" dy="1.2" result="offsetBlur"/>
+      <feFlood flood-color="#000000" flood-opacity="0.5" result="tint"/>
+      <feComposite in="tint" in2="offsetBlur" operator="in" result="shadow"/>
+      <feMerge>
+        <feMergeNode in="shadow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#felt)"/>
+
+  <!--
+    后牌：填充略暗于前牌，且带深色描边。
+    两张牌原先同为 #fdfbf5 且无边框，重叠处融为一体、看不出是两张牌；
+    靠「明度差 + 描边 + 投影」三重区分，缩到 16px 仍能读出前后关系。
+  -->
+  <g transform="rotate(-9 29 30)" filter="url(#lift)">
+    <rect x="16" y="12" width="26" height="36" rx="4"
+          fill="#e6dfd0" stroke="#1b2b24" stroke-width="1.6"/>
+  </g>
+
+  <!-- 前牌：纯白 + 描边，压在后牌之上 -->
+  <g transform="rotate(7 37 34)" filter="url(#lift)">
+    <rect x="24" y="16" width="26" height="36" rx="4"
+          fill="#fdfbf5" stroke="#1b2b24" stroke-width="1.6"/>
+    <text x="37" y="41" font-family="Georgia, 'Times New Roman', serif" font-size="21"
+          font-weight="700" fill="#c0392b" text-anchor="middle">R</text>
+  </g>
+</svg>
