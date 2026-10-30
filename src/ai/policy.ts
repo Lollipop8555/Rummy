@@ -277,8 +277,8 @@ function planDrawPhase(view: GameView, intensity: Intensity): AiPlan {
     }
   }
 
-  // 深层收取：L5 才考虑，且必须「收益扣除连带成本后仍优于现有方案」
-  if (intensity >= 5 && view.discard.length > 2) {
+  // 深层收取：L5 才考虑；指定牌必须即时打出，仅上方牌计入连带成本。
+  if (intensity >= 5 && view.discard.length > 1) {
     for (let i = view.discard.length - 2; i >= 0; i -= 1) {
       const candidate = view.discard[i];
       if (candidate === undefined || isJoker(candidate)) {
@@ -288,9 +288,12 @@ function planDrawPhase(view: GameView, intensity: Intensity): AiPlan {
       const cost = taken
         .slice(1)
         .reduce((sum, card) => sum + handValue(card), 0);
-      const virtualHand = [...view.me.cards, ...taken];
+      const virtualHand = [...view.me.cards, ...taken.slice(1)];
       const gain = handPlanScore(virtualHand) - baseline;
-      if (gain > cost + 5 && canUseImmediately(virtualHand, candidate, view)) {
+      if (
+        gain > cost + 5 &&
+        canUseImmediately([...view.me.cards, ...taken], candidate, view)
+      ) {
         moves.push({ type: 'takeDiscardDeep', cardId: candidate.id });
         return { moves, score: gain - cost };
       }
@@ -307,6 +310,7 @@ function handPlanScore(hand: readonly Card[]): number {
   return plan.tableGain - plan.leftoverLoss;
 }
 
+/** 深层指定牌可与原手牌及上方连带牌一起组成组合，也可直接接入桌面组合。 */
 function canUseImmediately(
   hand: readonly Card[],
   card: Card,

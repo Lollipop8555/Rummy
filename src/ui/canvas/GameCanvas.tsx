@@ -73,6 +73,14 @@ export function GameCanvas(props: GameCanvasProps) {
   const prevRoundRef = useRef<number>(-1);
   // 上一帧桌面上已有的牌 id（用于检测亮牌/接牌新增的牌）
   const prevTableCardsRef = useRef<readonly string[]>([]);
+  // 本次从弃牌堆移走的牌在上一帧的位置；深层收取时用于直达桌面/手牌动画
+  const removedDiscardOriginsRef = useRef<ReadonlyMap<string, {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    rotation: number;
+  }>>(new Map());
   // 上一帧布局：用于计算 animation 起点（被移动的牌原来的位置）
   const lastLayoutRef = useRef<TableLayout | null>(null);
 
@@ -247,10 +255,38 @@ export function GameCanvas(props: GameCanvasProps) {
     [handFaceScreen],
   );
 
-  // 检测弃牌堆新增（弃牌）：牌从它**原来所在的那只手牌**飞向弃牌堆顶
+  // 检测弃牌堆变化，并记录被取走牌的原位置，供后续手牌/桌面动画直接取用
   useEffect(() => {
     const ids = props.view.discard.map((c) => c.id);
     const prev = prevDiscardRef.current;
+    const removedOrigins = new Map<string, {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      rotation: number;
+    }>();
+    const lastLay = lastLayoutRef.current;
+    if (lastLay !== null) {
+      for (const id of prev) {
+        if (ids.includes(id)) continue;
+        const face = lastLay.discard.cards.find((item) => item.card.id === id);
+        if (face === undefined) continue;
+        removedOrigins.set(id, {
+          x: lastLay.discard.viewport.x + face.x - scrollRef.current.discard,
+          y: lastLay.discard.viewport.y + face.y,
+          w: face.w,
+          h: face.h,
+          rotation: face.w > face.h ? Math.PI / 2 : 0,
+        });
+      }
+    }
+    if (removedOrigins.size > 0) {
+      removedDiscardOriginsRef.current = new Map([
+        ...removedDiscardOriginsRef.current,
+        ...removedOrigins,
+      ]);
+    }
     if (prev.length > 0 && ids.length > prev.length && layout !== null) {
       const card = props.view.discard[props.view.discard.length - 1];
       const dv = layout.discard;
@@ -292,55 +328,55 @@ export function GameCanvas(props: GameCanvasProps) {
     prevDiscardRef.current = ids;
   }, [props.view.discard, layout, flyCards, originForSide]);
 
-  // 检测手牌新增（摸牌）：牌从牌堆飞向它在手牌中的实际落点
+  // 检测手牌新增：正常摸牌从牌堆飞入，深层收取的连带牌从弃牌堆直接飞入
   useEffect(() => {
     const ids = props.view.me.cards.map((c) => c.id);
     const prev = prevHandRef.current;
-    if (prev.length > 0 && ids.length > prev.length && layout !== null) {
-      const newId = ids.find((id) => !prev.includes(id));
-      const card = props.view.me.cards.find((c) => c.id === newId);
-      const deck = layout.deck;
+    if (layout !== null) {
+      const added = props.view.me.cards.filter((card) => !prev.includes(card.id));
       const cs = layout.card;
-      // 新牌按排序插在手牌中任意位置（不是末尾），所以必须按它**实际落点**
-      // 调整横向滚动，否则摸到的牌可能落在视口外，玩家看不到「牌进来了」。
-      if (newId !== undefined) {
-        const face = layout.hand.cards.find((f) => f.card.id === newId);
-        if (face !== undefined) {
-          const maxHand = Math.max(0, layout.hand.contentW - layout.hand.viewport.w);
-          const left = scrollRef.current.hand;
-          const right = left + layout.hand.viewport.w;
-          let next = left;
-          if (face.x < left) {
-            next = face.x;
-          } else if (face.x + face.w > right) {
-            next = face.x + face.w - layout.hand.viewport.w;
-          }
-          next = clampScroll(next, maxHand);
-          if (next !== left) {
-            scrollRef.current = { ...scrollRef.current, hand: next };
-            setScroll(scrollRef.current);
-          }
+      const deck = layout.deck;
+      const firstNew = added[0];
+      const face = firstNew === undefined
+        ? undefined
+        : layout.hand.cards.find((item) => item.card.id === firstNew.id);
+      // 状态差分按牌 id 判断；深层收取时净手牌数可能减少，但连带牌仍需逐张飞入。
+      // 新牌按排序插在手牌中任意位置，先滚动保证最新牌可见。
+      if (face !== undefined) {
+        const maxHand = Math.max(0, layout.hand.contentW - layout.hand.viewport.w);
+        const left = scrollRef.current.hand;
+        const right = left + layout.hand.viewport.w;
+        let next = left;
+        if (face.x < left) next = face.x;
+        else if (face.x + face.w > right) next = face.x + face.w - layout.hand.viewport.w;
+        next = clampScroll(next, maxHand);
+        if (next !== left) {
+          scrollRef.current = { ...scrollRef.current, hand: next };
+          setScroll(scrollRef.current);
         }
       }
-      const target = newId !== undefined ? handFaceScreen(layout, newId) : null;
-      if (card !== undefined && deck !== null) {
-        flyCards([{
+      const flights: FlyingCard[] = [];
+      for (const card of added) {
+        const target = handFaceScreen(layout, card.id);
+        const discardOrigin = removedDiscardOriginsRef.current.get(card.id);
+        if (discardOrigin === undefined && deck === null) continue;
+        flights.push({
           card,
-          fromX: deck.x + deck.w / 2 - cs.w / 2,
-          fromY: deck.y + deck.h / 2 - cs.h / 2,
+          fromX: discardOrigin?.x ?? (deck?.x ?? 0) + (deck?.w ?? 0) / 2 - cs.w / 2,
+          fromY: discardOrigin?.y ?? (deck?.y ?? 0) + (deck?.h ?? 0) / 2 - cs.h / 2,
           toX: target?.x ?? layout.hand.viewport.x + layout.hand.viewport.w / 2,
           toY: target?.y ?? layout.hand.viewport.y,
-          // 牌堆横屏时是横躺的（从 sideways），手牌是竖牌
-          fromW: deck.w,
-          fromH: deck.h,
+          fromW: discardOrigin?.w ?? deck?.w ?? cs.w,
+          fromH: discardOrigin?.h ?? deck?.h ?? cs.h,
           toW: cs.w,
           toH: target === null ? cs.h : cs.w * 1.42,
-          fromRotation: deck.w > deck.h ? Math.PI / 2 : 0,
+          fromRotation: discardOrigin?.rotation ?? (deck !== null && deck.w > deck.h ? Math.PI / 2 : 0),
           toRotation: 0,
           radius: cs.radius,
           progress: 0,
-        }]);
+        });
       }
+      flyCards(flights);
     }
     prevHandRef.current = ids;
   }, [props.view.me.cards, layout, flyCards, handFaceScreen]);
@@ -395,7 +431,8 @@ export function GameCanvas(props: GameCanvasProps) {
     const prev = prevTableCardsRef.current;
     const lastLay = lastLayoutRef.current;
     const added = curTableCards.filter((id) => !prev.includes(id));
-    if (prev.length > 0 && added.length > 0) {
+    const hasDiscardOrigin = added.some((id) => removedDiscardOriginsRef.current.has(id));
+    if (added.length > 0 && (prev.length > 0 || hasDiscardOrigin)) {
       // 桌面所有牌的位置（按 id），供查目标点
       const tableFaces: { id: string; x: number; y: number; w: number; h: number; radius: number; sideways: boolean }[] = [];
       for (const m of [...layout.myMelds, ...layout.aiMelds]) {
@@ -409,8 +446,9 @@ export function GameCanvas(props: GameCanvasProps) {
         if (tf === undefined) continue;
         const card = props.view.table.flatMap((m) => m.meld.slots).find((s) => s.card.id === id)?.card;
         if (card === undefined) continue;
-        // 起点：该牌在上一帧**所属那一方**的手牌位置（我方手牌 or 对手手牌带）
-        const origin = lastLay !== null ? originForSide(lastLay, id) : null;
+        // 深层取来的指定牌从弃牌堆直达组合；普通亮牌/接牌仍从所属手牌飞出。
+        const discardOrigin = removedDiscardOriginsRef.current.get(id);
+        const origin = discardOrigin ?? (lastLay !== null ? originForSide(lastLay, id) : null);
         const cs = layout.card;
         flights.push({
           card,
@@ -422,7 +460,7 @@ export function GameCanvas(props: GameCanvasProps) {
           fromH: origin?.h ?? cs.h,
           toW: tf.w,
           toH: tf.h,
-          fromRotation: 0,
+          fromRotation: discardOrigin?.rotation ?? 0,
           toRotation: tf.sideways ? Math.PI / 2 : 0,
           radius: tf.radius,
           progress: 0,

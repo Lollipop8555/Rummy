@@ -36,6 +36,7 @@ export type GameView = {
   readonly phase: Phase;
   readonly turn: Side;
   readonly roundIndex: number;
+  readonly opponentNameIndex: number;
   readonly deckCount: number;
   readonly discard: readonly Card[];
   /**
@@ -121,9 +122,7 @@ function computePlayable(
 }
 
 /**
- * 弃牌堆中每张牌是否「可取」。
- * 与 engine 的 canImmediatelyMeld 同源：取走后能立刻组成组合或接到桌面。
- * 仅取顶牌规则适用（当前 UI 只支持取顶牌）。
+ * 弃牌堆中每张牌是否「可取」。顶牌可直接拿；历史牌必须能立即组成组合/接牌。
  */
 function computeDiscardPlayable(
   hand: readonly Card[],
@@ -133,15 +132,15 @@ function computeDiscardPlayable(
   const result: Record<string, boolean> = {};
   discard.forEach((card, index) => {
     const isTop = index === discard.length - 1;
-    // 规则：弃牌堆**顶牌**可直接取（无需立刻成组），中间牌需立刻成组。
+    // 弃牌堆顶牌可直接取（无需立刻成组），中间牌需立刻成组。
     if (isTop) {
       result[card.id] = true;
       return;
     }
-    // 深层收取：从该牌到顶部全部进入手牌，再判断该牌能否立刻成组或接牌
-    const taken = discard.slice(index);
-    const nextHand = [...hand, ...taken];
-    const others = nextHand.filter((item) => item.id !== card.id);
+    // 指定牌与其上方的连带牌、原手牌都可参与同一组合。
+    const takenAbove = discard.slice(index + 1);
+    const available = [...hand, ...takenAbove];
+    const others = available.filter((candidate) => candidate.id !== card.id);
     let found = false;
     for (let i = 0; i < others.length && !found; i += 1) {
       for (let j = i + 1; j < others.length && !found; j += 1) {
@@ -183,6 +182,7 @@ export function toGameView(
     // 只暴露张数，绝不暴露内容
     deckCount: state.deck.length,
     discard: state.discard.map((card) => card),
+    opponentNameIndex: state.opponentNameIndex,
     // 弃牌高亮只在「轮到自己的取牌阶段」才有意义；
     // 进入 play 阶段（已取牌）后不再高亮，避免误以为还能取弃牌。
     discardPlayable:
