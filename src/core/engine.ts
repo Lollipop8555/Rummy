@@ -33,7 +33,7 @@ import {
   type MeldOwner,
 } from './scoring';
 
-export const ENGINE_VERSION = 1;
+export const ENGINE_VERSION = 2;
 
 export type Phase =
   | 'draw' // 等待当前玩家取牌
@@ -97,10 +97,11 @@ export type GameState = {
    * 防止双方在弃牌堆上来回搬运同一张牌（见 README「回合流程」）。
    */
   readonly drawnCardId: string | null;
+  /** 每局随机确定的对手昵称序号，存档后继续保持一致。 */
+  readonly opponentNameIndex: number;
   /**
    * 深层收取时必须立刻成组的牌 id。
-   * 非空时，玩家必须先亮出包含该牌的组合（doMeld），否则不能弃牌/结束回合。
-   * 用于强制「从弃牌堆深层取走的那张牌必须立刻打出」。
+   * 深层取牌采用原子动作直接把指定牌用于组合，此字段保留为 null 兼容存档结构。
    */
   readonly mustMeldCardId: string | null;
 };
@@ -157,6 +158,7 @@ export function createGame(options: NewGameOptions): GameState {
     lastRound: null,
     lastMatch: null,
     starterReveal: reveal ?? null,
+    opponentNameIndex: Math.abs(rng) % 8,
     undoStack: [],
     drewThisTurn: false,
     intensity: options.intensity ?? 0,
@@ -338,49 +340,68 @@ function doTakeDiscardDeep(
     return fail('弃牌堆中没有该牌');
   }
   const side = state.turn;
-  // 深层收取：从该牌到顶部全部收入手牌。
-  // 规则要求「取走的那张必须立刻用于组成组合」，因此校验能否立刻成组；
-  // 不能成组则不允许收取。本回合该牌禁止弃回（drawnCardId 标记）。
-  const nextHand = [...handOf(state, side), ...taken];
-  if (!canImmediatelyMeld(nextHand, target, state.table)) {
-    return fail('该牌无法立刻组成组合');
-  }
-  const next: GameState = {
-    ...state,
-    discard: state.discard.slice(0, index),
-    hands: { ...state.hands, [side]: nextHand },
-    phase: 'play',
-    drewThisTurn: true,
-    drawnCardId: target.id,
-    // 深层收取的牌必须立刻成组打出
-    mustMeldCardId: target.id,
-  };
-  return ok(withUndo(state, next), [{ kind: 'takeDiscard', side, cards: taken }]);
-}
+  const hand = handOf(state, side);
+  const incomingHand = taken.slice(1);
 
-/**
- * 判断「新取的牌」是否能立刻参与某个合法组合。
- * 两种途径：与手牌中任意 2 张组成新组合，或直接接到桌面已有组合。
- */
-function canImmediatelyMeld(
-  hand: readonly Card[],
-  card: Card,
-  table: readonly MeldOnTable[],
-): boolean {
-  const others = hand.filter((item) => item.id !== card.id);
-  for (let i = 0; i < others.length; i += 1) {
-    for (let j = i + 1; j < others.length; j += 1) {
-      const a = others[i];
-      const b = others[j];
-      if (a === undefined || b === undefined) {
-        continue;
-      }
-      if (resolveMelds([card, a, b]).length > 0) {
-        return true;
-      }
+  // 指定牌必须在本动作直接参与组合。可用牌包括原手牌及指定牌上方的连带牌；
+  // 组合中实际使用的连带牌直接上桌，未使用的连带牌才收入手牌。
+  const available = [...hand, ...incomingHand];
+  for (let i = 0; i < available.length; i += 1) {
+    for (let j = i + 1; j < available.length; j += 1) {
+      const a = available[i];
+      const b = available[j];
+      if (a === undefined || b === undefined) continue;
+      const meld = resolveMelds([target, a, b])[0];
+      if (meld === undefined) continue;
+
+      const usedIds = new Set([target.id, a.id, b.id]);
+      const meldId = `m${state.roundIndex}-${state.table.length}-${side}`;
+      const remainingHand = [
+        ...withoutCards(hand, [...usedIds]),
+        ...incomingHand.filter((card) => !usedIds.has(card.id)),
+      ];
+      const next: GameState = {
+        ...state,
+        discard: state.discard.slice(0, index),
+        hands: { ...state.hands, [side]: remainingHand },
+        table: [...state.table, { id: meldId, owner: side, meld }],
+        phase: 'play',
+        drewThisTurn: true,
+        drawnCardId: null,
+        mustMeldCardId: null,
+      };
+      return afterPlayAction(state, withUndo(state, next), side, [
+        { kind: 'takeDiscard', side, cards: taken },
+        { kind: 'meld', side, meldId },
+      ]);
     }
   }
-  return table.some((item) => appendOptions(item.meld, card).length > 0);
+
+  for (const tableMeld of state.table) {
+    const append = appendOptions(tableMeld.meld, target)[0];
+    if (append === undefined) continue;
+    const next: GameState = {
+      ...state,
+      discard: state.discard.slice(0, index),
+      hands: {
+        ...state.hands,
+        [side]: [...hand, ...incomingHand],
+      },
+      table: state.table.map((item) =>
+        item.id === tableMeld.id ? { ...item, meld: append.meld } : item,
+      ),
+      phase: 'play',
+      drewThisTurn: true,
+      drawnCardId: null,
+      mustMeldCardId: null,
+    };
+    return afterPlayAction(state, withUndo(state, next), side, [
+      { kind: 'takeDiscard', side, cards: taken },
+      { kind: 'layOff', side, meldId: tableMeld.id, card: target },
+    ]);
+  }
+
+  return fail('该牌无法立刻组成组合');
 }
 
 function doMeld(

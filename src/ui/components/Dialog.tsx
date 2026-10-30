@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 
 export type DialogProps = {
   readonly title: string;
+  readonly className?: string;
   readonly children?: ReactNode;
   readonly actions: ReactNode;
   readonly onClose?: () => void;
@@ -18,6 +19,7 @@ export type DialogProps = {
  */
 export function Dialog({
   title,
+  className,
   children,
   actions,
   onClose,
@@ -63,7 +65,7 @@ export function Dialog({
       }
     >
       <div
-        className="dialog"
+        className={className === undefined ? 'dialog' : `dialog ${className}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}

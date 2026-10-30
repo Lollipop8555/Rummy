@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DECK_SIZE, isJoker, normalCard } from './cards';
+import { DECK_SIZE, normalCard } from './cards';
 import { asRuns } from './meld';
 import {
   createGame,
@@ -166,9 +166,9 @@ describe('弃牌', () => {
     expect(discardResult.ok).toBe(false);
   });
 
-  it('深层收取：牌直接进手牌，不强制立刻亮牌，但本回合不能弃回', () => {
+  it('深层收取：指定牌直接亮成组合，只有其上方的牌进入手牌', () => {
     const state = newGame();
-    // 弃牌堆：[♠7, ♠9]；顶牌 ♠9，中间 ♠7。手牌 ♠5♠6，取 ♠7 成顺子。
+    // 弃牌堆：[♠7, ♠9]；顶牌 ♠9，中间 ♠7。手牌 ♠5♠6，取 ♠7 直接亮成顺子。
     const custom: GameState = {
       ...state,
       phase: 'draw',
@@ -182,19 +182,80 @@ describe('弃牌', () => {
     const taken = reduce(custom, { type: 'takeDiscardDeep', cardId: 'S7' });
     expect(taken.ok).toBe(true);
     if (!taken.ok) return;
-    // 进入 play 阶段、牌已进手牌（连带 ♠7、♠9 都到手）
     expect(taken.state.phase).toBe('play');
-    expect(taken.state.hands.player.some((c) => c.id === 'S7')).toBe(true);
-    expect(taken.state.hands.player.some((c) => c.id === 'S9')).toBe(true);
-    // 深层收取的牌禁止弃回
-    expect(taken.state.drawnCardId).toBe('S7');
-    const result = reduce(taken.state, { type: 'discard', cardId: 'S7' });
-    expect(result.ok).toBe(false);
+    expect(taken.state.discard).toEqual([]);
+    expect(taken.state.hands.player.some((card) => card.id === 'S7')).toBe(false);
+    expect(taken.state.hands.player.some((card) => card.id === 'S9')).toBe(true);
+    expect(taken.state.table).toHaveLength(1);
+    expect(taken.state.table[0]?.meld.slots.map((slot) => slot.card.id)).toEqual(
+      ['S5', 'S6', 'S7'],
+    );
+    expect(taken.state.mustMeldCardId).toBeNull();
+    expect(taken.logs.map((log) => log.kind)).toEqual(['takeDiscard', 'meld']);
   });
 
-  it('深层收取后用接牌打出去，应解除强制亮牌（否则无法结束回合）', () => {
+  it('深层收取：指定牌可与上方弃牌及手牌一起直接组成组合', () => {
     const state = newGame();
-    // 桌面已有 ♠4♠5♠6，弃牌堆中间 ♠7，S7 可接到顺子高位
+    const custom: GameState = {
+      ...state,
+      phase: 'draw',
+      turn: 'player',
+      // 指定 ♠9，其上方有 ♥9；顶端 ♣4 未参与组合，应进入手牌。
+      discard: [normalCard('S', 9), normalCard('H', 9), normalCard('C', 4)],
+      hands: {
+        ...state.hands,
+        player: [normalCard('D', 9)],
+      },
+    };
+    const view = toGameView(custom, { side: 'player' });
+    expect(view.discardPlayable.S9).toBe(true);
+
+    const taken = reduce(custom, { type: 'takeDiscardDeep', cardId: 'S9' });
+    expect(taken.ok).toBe(true);
+    if (!taken.ok) return;
+    expect(taken.state.table).toHaveLength(1);
+    expect(taken.state.table[0]?.meld.slots.map((slot) => slot.card.id).sort()).toEqual(
+      ['D9', 'H9', 'S9'],
+    );
+    expect(taken.state.hands.player.map((card) => card.id)).toEqual(['C4']);
+    expect(taken.state.discard).toEqual([]);
+    expect(taken.logs.map((log) => log.kind)).toEqual(['takeDiscard', 'meld']);
+  });
+
+  it('弃牌堆连续三张 9 可不依赖手牌直接组成同点数组', () => {
+    const state = newGame();
+    const custom: GameState = {
+      ...state,
+      phase: 'draw',
+      turn: 'player',
+      discard: [
+        normalCard('S', 9),
+        normalCard('H', 9),
+        normalCard('D', 9),
+      ],
+      hands: {
+        ...state.hands,
+        player: [],
+      },
+    };
+    const view = toGameView(custom, { side: 'player' });
+    expect(view.discardPlayable.S9).toBe(true);
+
+    const taken = reduce(custom, { type: 'takeDiscardDeep', cardId: 'S9' });
+    expect(taken.ok).toBe(true);
+    if (!taken.ok) return;
+    expect(taken.state.table).toHaveLength(1);
+    expect(taken.state.table[0]?.meld.type).toBe('set');
+    expect(taken.state.table[0]?.meld.slots.map((slot) => slot.card.id).sort()).toEqual(
+      ['D9', 'H9', 'S9'],
+    );
+    expect(taken.state.hands.player).toEqual([]);
+    expect(taken.state.discard).toEqual([]);
+    expect(taken.logs.map((log) => log.kind)).toContain('meld');
+  });
+
+  it('深层收取：指定牌直接接入桌面组合，上方牌仍进入手牌', () => {
+    const state = newGame();
     const baseMeld = asRuns([
       normalCard('S', 4),
       normalCard('S', 5),
@@ -208,28 +269,20 @@ describe('弃牌', () => {
       discard: [normalCard('S', 7), normalCard('S', 9)],
       hands: {
         ...state.hands,
-        player: [normalCard('H', 2), normalCard('D', 3), ...state.hands.player.slice(2)],
+        player: [normalCard('H', 2), normalCard('D', 3)],
       },
       table: [{ id: 'm0', owner: 'player', meld: baseMeld }],
     };
     const taken = reduce(custom, { type: 'takeDiscardDeep', cardId: 'S7' });
     expect(taken.ok).toBe(true);
     if (!taken.ok) return;
-    expect(taken.state.mustMeldCardId).toBe('S7');
-
-    // 把 S7 接到桌上的 ♠5♠6♠8 之间（形成 5-6-7-8）
-    const laid = reduce(taken.state, {
-      type: 'layOff',
-      meldId: 'm0',
-      cardId: 'S7',
-    });
-    expect(laid.ok).toBe(true);
-    if (!laid.ok) return;
-    // 关键：强制亮牌标记必须被清除，否则玩家既不能弃牌也无法结束回合
-    expect(laid.state.mustMeldCardId).toBeNull();
-    const other = laid.state.hands.player.find((c) => !isJoker(c));
-    if (other === undefined) throw new Error('手牌为空');
-    expect(reduce(laid.state, { type: 'discard', cardId: other.id }).ok).toBe(true);
+    expect(taken.state.phase).toBe('play');
+    expect(taken.state.table[0]?.meld.slots).toHaveLength(4);
+    expect(taken.state.table[0]?.meld.slots.some((slot) => slot.card.id === 'S7')).toBe(true);
+    expect(taken.state.hands.player.some((card) => card.id === 'S7')).toBe(false);
+    expect(taken.state.hands.player.some((card) => card.id === 'S9')).toBe(true);
+    expect(taken.state.mustMeldCardId).toBeNull();
+    expect(taken.logs.map((log) => log.kind)).toEqual(['takeDiscard', 'layOff']);
   });
 });
 

@@ -146,6 +146,10 @@ export default function App() {
           <GameScreenCanvas
             view={controller.view}
             language={profile.language}
+            opponentName={translate(
+              profile.language,
+              `opponent.name.${String(controller.view.opponentNameIndex)}` as TextKey,
+            )}
             sortMode={sortMode}
             onSortModeChange={changeSortMode}
             onAction={handleAction}

@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { isJoker, type Card } from '../core/cards';
+import { isJoker, rankLabel, type Card } from '../core/cards';
 import { appendOptions, resolveMelds, type Meld } from '../core/meld';
 import type { GameView } from '../core/view';
 import type { Action } from '../core/engine';
@@ -23,6 +23,7 @@ import { GameCanvas } from './canvas/GameCanvas';
 export type GameScreenCanvasProps = {
   readonly view: GameView;
   readonly language: Language;
+  readonly opponentName: string;
   readonly sortMode: SortMode;
   readonly onSortModeChange: (mode: SortMode) => void;
   readonly onAction: (action: Action) => { ok: boolean; error?: string };
@@ -42,6 +43,7 @@ type PendingMeld = {
 export function GameScreenCanvas({
   view,
   language,
+  opponentName,
   sortMode,
   onSortModeChange,
   onAction,
@@ -63,7 +65,7 @@ export function GameScreenCanvas({
   const [pendingMeld, setPendingMeld] = useState<PendingMeld | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [surrenderOpen, setSurrenderOpen] = useState(false);
-  /** 已提示过强制亮牌的牌 id，避免同一张牌反复弹提示 */
+  /** 旧存档兼容字段；当前深层收取为原子动作，不会要求手牌待亮牌。 */
   const promptedMustMeld = useRef<string | null>(null);
 
   const myTurn = view.turn === 'player';
@@ -77,28 +79,10 @@ export function GameScreenCanvas({
     window.setTimeout(() => setToast(null), 1900);
   }, []);
 
-  /**
-   * 深层收取（从弃牌堆取非顶牌）后，引擎会把 `mustMeldCardId` 置为那张牌：
-   * 规则要求它必须立刻组成组合打出，否则本回合无法结束。
-   *
-   * 这里做三件事，缺一不可：
-   * 1. 自动选中该牌 —— 玩家一取到就处于「待亮牌」状态，不需要自己去手牌里找；
-   * 2. 弹一次提示 —— 明确告知「必须立刻亮牌」，而不是让人以为卡住了；
-   * 3. 清掉残留选中 —— 若之前选着别的牌，那些选择必须让位，否则会把
-   *    不该出的牌一起带进组合判定。
-   */
+  /** 深层指定牌已由引擎在取牌的同一动作中直接打入组合，不需要手牌待确认态。 */
   useEffect(() => {
-    const id = view.mustMeldCardId;
-    if (id === null) {
-      promptedMustMeld.current = null;
-      return;
-    }
-    setSelected([id]);
-    if (promptedMustMeld.current !== id) {
-      promptedMustMeld.current = id;
-      showToast(t('hint.mustMeld'));
-    }
-  }, [view.mustMeldCardId, showToast, t]);
+    if (view.mustMeldCardId === null) promptedMustMeld.current = null;
+  }, [view.mustMeldCardId]);
 
   const clearSelection = useCallback(() => setSelected([]), []);
 
@@ -185,11 +169,6 @@ export function GameScreenCanvas({
     if (selectedCards.length === 1) {
       const card = selectedCards[0];
       if (card === undefined) return;
-      // 深层收取的牌必须先亮出组合，不能直接弃
-      if (view.mustMeldCardId !== null) {
-        showToast(t('hint.mustMeld'));
-        return;
-      }
       if (isJoker(card)) {
         showToast(t('hint.jokerCannotDiscard'));
         return;
@@ -229,7 +208,6 @@ export function GameScreenCanvas({
     showToast,
     t,
     view.drawnCardId,
-    view.mustMeldCardId,
     view.table,
   ]);
 
@@ -253,7 +231,7 @@ export function GameScreenCanvas({
   // 操作按钮文案：有选中牌时给出「亮牌 / 弃牌」，否则不显示。
   // 深层收取的牌必须立刻亮牌，此时按钮只能是「亮牌」，不能给「弃牌」——
   // 否则玩家点下去只会收到一条报错提示，属于典型的「按钮亮着但不可用」。
-  const mustMeldNow = view.mustMeldCardId !== null;
+  const mustMeldNow = false;
   const primaryLabel = canAct && selectedCards.length > 0
     ? mustMeldNow || selectedCards.length >= 3
       ? t('action.meld')
@@ -267,7 +245,7 @@ export function GameScreenCanvas({
     () => ({
       score: `${String(view.totals.player)} : ${String(view.totals.ai)}`,
       round: t('game.round', { n: view.roundIndex }),
-      opponentName: t('game.opponent'),
+      opponentName,
       opponentDesc: t(
         opponentDescriptionKey(
           view.intensity as Parameters<typeof opponentDescriptionKey>[0],
@@ -279,7 +257,7 @@ export function GameScreenCanvas({
       deckEnabled: mustDraw && view.deckCount > 0,
       deckEmpty: view.deckCount === 0,
     }),
-    [mustDraw, sortMode, t, view],
+    [mustDraw, opponentName, sortMode, t, view],
   );
 
   return (
@@ -406,11 +384,25 @@ export function GameScreenCanvas({
                   setPendingMeld(null);
                   if (ok) clearSelection();
                 }}
+                aria-label={`选择方案 ${String(index + 1)}：${meld.slots
+                  .map((slot) => `${rankLabel(slot.rank)}${suitSymbol(slot.suit)}${slot.simulated ? '（王牌模拟）' : ''}`)
+                  .join('、')}`}
               >
-                <span className="joker-option__label">
-                  {meld.slots
-                    .map((s) => `${s.suit}${String(s.rank)}`)
-                    .join(' ')}
+                <span className="joker-option__label">方案 {index + 1}</span>
+                <span className="joker-option__cards" aria-hidden="true">
+                  {meld.slots.map((slot, slotIndex) => (
+                    <span
+                      className={`meld-choice-card${slot.suit === 'H' || slot.suit === 'D' ? ' meld-choice-card--red' : ''}${slot.simulated ? ' meld-choice-card--joker' : ''}`}
+                      key={`${slot.card.id}-${slotIndex}`}
+                    >
+                      <span className="meld-choice-card__corner">
+                        <span>{rankLabel(slot.rank)}</span>
+                        <span>{suitSymbol(slot.suit)}</span>
+                      </span>
+                      <span className="meld-choice-card__center">{suitSymbol(slot.suit)}</span>
+                      {slot.simulated && <span className="meld-choice-card__joker">★</span>}
+                    </span>
+                  ))}
                 </span>
               </button>
             ))}
@@ -420,24 +412,63 @@ export function GameScreenCanvas({
 
       {view.phase === 'roundEnd' && view.lastRound !== null && (
         <Dialog
+          className="dialog--round-result"
           title={t('round.endTitle')}
           actions={
-            <button type="button" className="button button--primary" onClick={onRoundConfirm}>
+            <button type="button" className="button button--primary round-result__continue" onClick={onRoundConfirm}>
               {t('round.continue')}
+              <span aria-hidden="true">→</span>
             </button>
           }
         >
-          <p className="dialog__body">
-            {t(`round.reason.${view.lastRound.reason}` as TextKey)}
-          </p>
-          <div className="score-table">
-            <span />
-            <span className="score-table__head score-table__value">{t('game.you')}</span>
-            <span className="score-table__head score-table__value">{t('game.opponent')}</span>
-            <span>{t('round.roundScore')}</span>
-            <span className="score-table__value">{view.lastRound.playerRoundScore}</span>
-            <span className="score-table__value">{view.lastRound.aiRoundScore}</span>
-          </div>
+          <section className="round-result" aria-label={t('round.endTitle')}>
+            <div className="round-result__reason">
+              <span className="round-result__spark" aria-hidden="true">✦</span>
+              <span>{t(`round.reason.${view.lastRound.reason}` as TextKey)}</span>
+            </div>
+
+            <div className="round-result__scores">
+              <article className={`round-score-card${view.lastRound.playerRoundScore > view.lastRound.aiRoundScore ? ' round-score-card--lead' : ''}`}>
+                <span className="round-score-card__name">{t('game.you')}</span>
+                <strong className={view.lastRound.playerRoundScore >= 0 ? 'round-score-card__points' : 'round-score-card__points round-score-card__points--negative'}>
+                  {view.lastRound.playerRoundScore > 0 ? '+' : ''}{view.lastRound.playerRoundScore}
+                </strong>
+                <span className="round-score-card__caption">{t('round.roundScore')}</span>
+              </article>
+              <article className={`round-score-card${view.lastRound.aiRoundScore > view.lastRound.playerRoundScore ? ' round-score-card--lead' : ''}`}>
+                <span className="round-score-card__name">{t('game.opponent')}</span>
+                <strong className={view.lastRound.aiRoundScore >= 0 ? 'round-score-card__points' : 'round-score-card__points round-score-card__points--negative'}>
+                  {view.lastRound.aiRoundScore > 0 ? '+' : ''}{view.lastRound.aiRoundScore}
+                </strong>
+                <span className="round-score-card__caption">{t('round.roundScore')}</span>
+              </article>
+            </div>
+
+            <div className="round-result__breakdown">
+              <div className="round-result__row round-result__row--head">
+                <span />
+                <span>{t('game.you')}</span>
+                <span>{t('game.opponent')}</span>
+              </div>
+              <div className="round-result__row">
+                <span>{t('round.tableScore')}</span>
+                <strong>{view.lastRound.playerTableScore}</strong>
+                <strong>{view.lastRound.aiTableScore}</strong>
+              </div>
+              <div className="round-result__row">
+                <span>{t('round.handScore')}</span>
+                <strong className="round-result__penalty">{view.lastRound.playerHandScore > 0 ? '−' : ''}{view.lastRound.playerHandScore}</strong>
+                <strong className="round-result__penalty">{view.lastRound.aiHandScore > 0 ? '−' : ''}{view.lastRound.aiHandScore}</strong>
+              </div>
+            </div>
+
+            <div className="round-result__totals">
+              <span>{t('round.total')}</span>
+              <strong>{view.totals.player}</strong>
+              <span className="round-result__totals-divider">:</span>
+              <strong>{view.totals.ai}</strong>
+            </div>
+          </section>
         </Dialog>
       )}
 
@@ -478,4 +509,13 @@ export function GameScreenCanvas({
       )}
     </div>
   );
+}
+
+function suitSymbol(suit: 'S' | 'H' | 'D' | 'C'): string {
+  switch (suit) {
+    case 'S': return '♠';
+    case 'H': return '♥';
+    case 'D': return '♦';
+    case 'C': return '♣';
+  }
 }
