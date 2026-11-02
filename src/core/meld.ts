@@ -288,6 +288,14 @@ export function resolveMelds(cards: readonly Card[]): Meld[] {
   return [...asRuns(cards), ...asSets(cards)];
 }
 
+/**
+ * 判断没有自然牌可弃时，取顶后是否能直接把整手牌亮成一个合法组合。
+ * 有限的单次判定避免在每次取牌校验中枚举整手牌分区，同时允许自然牌与王牌直接出完。
+ */
+export function canPlayOutHand(hand: readonly Card[]): boolean {
+  return hand.length >= MIN_MELD_SIZE && resolveMelds(hand).length > 0;
+}
+
 /** 是否存在任意一种合法解释 */
 export function isLegalMeld(cards: readonly Card[]): boolean {
   return resolveMelds(cards).length > 0;

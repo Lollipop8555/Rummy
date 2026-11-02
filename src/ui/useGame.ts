@@ -63,7 +63,7 @@ function readSeedOverride(): number | null {
 
 export function useGame(
   profile: Profile,
-  onRatingChange: (delta: number) => void,
+  onRatingChange: (delta: number, matchId?: string) => void,
 ): GameController {
   const [state, setState] = useState<GameState | null>(null);
   const [loadNotice, setLoadNotice] = useState<LoadResult['kind'] | null>(null);
@@ -81,7 +81,7 @@ export function useGame(
   const aiPlanKey = useRef<string>('');
   /** 下一步的延迟：首步用档位思考时间，其后为固定间隔 */
   const aiDelay = useRef<number>(AI_STEP_MS);
-  const settledMatch = useRef<number>(-1);
+  const settledMatch = useRef<string | null>(null);
 
   /** 启动前先尝试读档，避免「刷新即丢局」 */
   useEffect(() => {
@@ -102,6 +102,19 @@ export function useGame(
     (action: Action): { ok: boolean; error?: string } => {
       if (state === null) {
         return { ok: false, error: '对局尚未开始' };
+      }
+      const isFlowConfirmation =
+        action.type === 'confirmDeal' ||
+        action.type === 'confirmRound' ||
+        action.type === 'confirmMatch';
+      if (state.turn !== PLAYER && !isFlowConfirmation) {
+        return { ok: false, error: '当前不是玩家回合' };
+      }
+      if (
+        (action.type === 'confirmRound' || action.type === 'confirmMatch') &&
+        state.phase !== 'roundEnd' && state.phase !== 'matchEnd'
+      ) {
+        return { ok: false, error: '当前没有待确认的结算' };
       }
       const result = reduce(state, action);
       if (!result.ok) {
@@ -130,8 +143,11 @@ export function useGame(
     // 仅影响「新建对局」的洗牌序列，不涉及任何游戏规则。
     const forced = readSeedOverride();
     const seed = forced ?? (Date.now() & 0x7fffffff);
+    const matchId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${String(seed)}-${String(Date.now())}-${String(Math.random())}`;
     const intensity = intensityForRating(profile.rating);
-    const fresh = createGame({ seed, intensity });
+    const fresh = createGame({ seed, intensity, matchId });
     setState(fresh);
     setLastLogs([]);
     saveGame(fresh);
@@ -162,17 +178,18 @@ export function useGame(
     if (state === null || state.phase !== 'matchEnd' || state.lastMatch === null) {
       return;
     }
-    const matchIndex = state.roundIndex;
-    if (settledMatch.current === matchIndex) {
+    const matchId = state.matchId;
+    const outcome = state.lastMatch.outcome;
+    if (outcome === 'draw') {
       return;
     }
-    settledMatch.current = matchIndex;
-    const outcome = state.lastMatch.outcome;
-    if (outcome === 'win' || outcome === 'lose') {
-      onRatingChange(ratingDelta(outcome));
-      playSound(outcome === 'win' ? 'win' : 'lose');
+    if (settledMatch.current === matchId || profile.settledMatchId === matchId) {
+      return;
     }
-  }, [state, onRatingChange]);
+    settledMatch.current = matchId;
+    onRatingChange(ratingDelta(outcome), matchId);
+    playSound(outcome === 'win' ? 'win' : 'lose');
+  }, [state, onRatingChange, profile.settledMatchId]);
 
   /**
    * AI 回合驱动：**逐个动作**提交，而不是一次性跑完整个回合。
@@ -246,6 +263,9 @@ export function useGame(
       const result = reduce(current, move);
       if (!result.ok) {
         aiQueue.current = [];
+        aiPlanKey.current = '';
+        aiDelay.current = AI_STEP_MS;
+        setState({ ...current });
         return;
       }
       setState(result.state);

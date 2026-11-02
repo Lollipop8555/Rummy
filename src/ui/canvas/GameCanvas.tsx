@@ -56,6 +56,7 @@ function clampScroll(offset: number, max: number): number {
 export function GameCanvas(props: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [animationCount, setAnimationCount] = useState(0);
   const layoutRef = useRef<TableLayout | null>(null);
   const [scroll, setScroll] = useState<ScrollState>({ hand: 0, discard: 0 });
   const scrollRef = useRef<ScrollState>({ hand: 0, discard: 0 });
@@ -64,14 +65,17 @@ export function GameCanvas(props: GameCanvasProps) {
   const rafRef = useRef<number | null>(null);
   // 动画进行中标记：true 时静态层跳过飞行牌、由飞行层绘制
   const animatingRef = useRef(false);
-  // 上一次的弃牌堆 / 手牌，用于检测新增
+  // 上一次的弃牌堆 / 手牌，用于检测新增；首次可绘制状态建立动画基线。
   const prevDiscardRef = useRef<readonly string[]>([]);
   const prevHandRef = useRef<readonly string[]>([]);
+  const discardBaselineReadyRef = useRef(false);
+  const handBaselineReadyRef = useRef(false);
   /** 上次的对手手牌张数：用于检测「对手摸牌」并播放牌背飞入 */
   const prevOppCountRef = useRef<number>(-1);
   /** 上次的轮次：轮次切换会重发牌，此时手牌数变化不代表「摸牌」 */
   const prevRoundRef = useRef<number>(-1);
   // 上一帧桌面上已有的牌 id（用于检测亮牌/接牌新增的牌）
+  const tableBaselineReadyRef = useRef(false);
   const prevTableCardsRef = useRef<readonly string[]>([]);
   // 本次从弃牌堆移走的牌在上一帧的位置；深层收取时用于直达桌面/手牌动画
   const removedDiscardOriginsRef = useRef<ReadonlyMap<string, {
@@ -183,14 +187,16 @@ export function GameCanvas(props: GameCanvasProps) {
       dpr,
       topbarText: topbarRef.current,
       scroll: scrollRef.current,
+      deckTopReveal: props.view.deckTopReveal,
       flying: flyingRef.current,
     });
-  }, []);
+  }, [props.view.deckTopReveal]);
 
   /** 启动一次飞行动画：命令式逐帧重绘，完全绕开 React state 时序 */
   const flyCards = useCallback(
     (bases: readonly FlyingCard[]) => {
       if (bases.length === 0) return;
+      setAnimationCount((count) => count + 1);
       const duration = 340;
       const startedAt = performance.now();
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
@@ -287,7 +293,12 @@ export function GameCanvas(props: GameCanvasProps) {
         ...removedOrigins,
       ]);
     }
-    if (prev.length > 0 && ids.length > prev.length && layout !== null) {
+    if (layout !== null && !discardBaselineReadyRef.current) {
+      discardBaselineReadyRef.current = true;
+      prevDiscardRef.current = ids;
+      return;
+    }
+    if (ids.length > prev.length && layout !== null) {
       const card = props.view.discard[props.view.discard.length - 1];
       const dv = layout.discard;
       const last = dv.cards[dv.cards.length - 1];
@@ -332,6 +343,11 @@ export function GameCanvas(props: GameCanvasProps) {
   useEffect(() => {
     const ids = props.view.me.cards.map((c) => c.id);
     const prev = prevHandRef.current;
+    if (layout !== null && !handBaselineReadyRef.current) {
+      handBaselineReadyRef.current = true;
+      prevHandRef.current = ids;
+      return;
+    }
     if (layout !== null) {
       const added = props.view.me.cards.filter((card) => !prev.includes(card.id));
       const cs = layout.card;
@@ -368,8 +384,8 @@ export function GameCanvas(props: GameCanvasProps) {
           toY: target?.y ?? layout.hand.viewport.y,
           fromW: discardOrigin?.w ?? deck?.w ?? cs.w,
           fromH: discardOrigin?.h ?? deck?.h ?? cs.h,
-          toW: cs.w,
-          toH: target === null ? cs.h : cs.w * 1.42,
+          toW: target?.w ?? cs.w,
+          toH: target?.h ?? cs.h,
           fromRotation: discardOrigin?.rotation ?? (deck !== null && deck.w > deck.h ? Math.PI / 2 : 0),
           toRotation: 0,
           radius: cs.radius,
@@ -430,9 +446,10 @@ export function GameCanvas(props: GameCanvasProps) {
     }
     const prev = prevTableCardsRef.current;
     const lastLay = lastLayoutRef.current;
+    const hasBaseline = tableBaselineReadyRef.current;
+    tableBaselineReadyRef.current = true;
     const added = curTableCards.filter((id) => !prev.includes(id));
-    const hasDiscardOrigin = added.some((id) => removedDiscardOriginsRef.current.has(id));
-    if (added.length > 0 && (prev.length > 0 || hasDiscardOrigin)) {
+    if (added.length > 0 && hasBaseline) {
       // 桌面所有牌的位置（按 id），供查目标点
       const tableFaces: { id: string; x: number; y: number; w: number; h: number; radius: number; sideways: boolean }[] = [];
       for (const m of [...layout.myMelds, ...layout.aiMelds]) {
@@ -581,7 +598,9 @@ export function GameCanvas(props: GameCanvasProps) {
       }
       switch (hit.id) {
         case 'deck':
-          props.onAction({ type: 'drawDeck' });
+          if (props.view.phase === 'draw' && props.view.turn === 'player') {
+            props.onAction({ type: 'drawDeck' });
+          }
           break;
         case 'discard-top':
           // 只有 draw 阶段（轮到玩家取牌）才能取弃牌顶牌
@@ -656,10 +675,18 @@ export function GameCanvas(props: GameCanvasProps) {
     <canvas
       ref={canvasRef}
       data-testid="game-canvas"
+      data-animation-count={animationCount}
       data-deck-x={deckCenter?.x}
       data-deck-y={deckCenter?.y}
       data-hand-x={handCenter?.x}
       data-hand-y={handCenter?.y}
+      data-hand-faces={JSON.stringify(layout?.hand.cards.map((face) => ({
+        cardId: face.card.id,
+        x: layout.hand.viewport.x - scroll.hand + face.x + face.w * 0.4,
+        y: layout.hand.viewport.y + face.y + face.h * 0.5,
+      })) ?? [])}
+      data-action-primary-x={layout?.actionPrimary === null || layout?.actionPrimary === undefined ? undefined : layout.actionPrimary.x + layout.actionPrimary.w / 2}
+      data-action-primary-y={layout?.actionPrimary === null || layout?.actionPrimary === undefined ? undefined : layout.actionPrimary.y + layout.actionPrimary.h / 2}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}

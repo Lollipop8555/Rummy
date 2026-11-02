@@ -79,6 +79,15 @@ describe('模式判定', () => {
 });
 
 describe('卡牌尺寸', () => {
+  it('仅玩家手牌大于牌桌基准牌，牌堆与弃牌保持原尺寸', () => {
+    const layout = computeLayout(makeInput(baseView(), 1440, 900));
+    expect(layout.hand.cards[0]?.w).toBeGreaterThan(layout.card.w);
+    expect(layout.hand.cards[0]?.h).toBeGreaterThan(layout.card.h);
+    expect(layout.deck?.w).toBe(layout.card.w);
+    expect(layout.deck?.h).toBe(layout.card.h);
+    expect(layout.discard.cards[0]?.w ?? layout.card.w).toBe(layout.card.w);
+  });
+
   it('横屏牌宽遵循 clamp(40, 15vh, 66)', () => {
     const c = pickCardSize('columns', 844, 400);
     expect(c.w).toBe(60); // 400 * 0.15 = 60
@@ -121,12 +130,16 @@ describe('公共栏（常规模式）', () => {
 });
 
 describe('手牌', () => {
-  it('牌宽不被压缩（始终等于基准牌宽）', () => {
+  it('所有玩家手牌保持统一放大尺寸，且只大于基准牌尺寸', () => {
     const layout = computeLayout(makeInput(baseView(), 390, 844));
-    const cw = layout.card.w;
+    const expectedHandWidth = Math.round(layout.card.w * 1.22);
     for (const face of layout.hand.cards) {
-      expect(face.w).toBe(cw);
+      expect(face.w).toBe(expectedHandWidth);
+      expect(face.h).toBeGreaterThan(layout.card.h);
     }
+    expect(layout.deck?.w).toBe(layout.card.w);
+    expect(layout.discard.cards[0]?.w ?? layout.card.w).toBe(layout.card.w);
+    expect(layout.opponentHandBand).toBeDefined();
   });
 
   it('手牌牌多时可横向滚动（内容宽超过 viewport）', () => {

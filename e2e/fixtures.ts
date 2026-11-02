@@ -28,9 +28,18 @@ export async function openCleanHomeWithSeed(
 }
 
 /** 开始一局（使用固定 seed，保证可复现） */
-export async function startGame(page: Page): Promise<void> {
+export async function startGame(
+  page: Page,
+  options: { readonly waitForFirstTurn?: boolean } = {},
+): Promise<void> {
   await page.getByRole('button', { name: /开始对局|Start Game/ }).click();
   await expect(page.getByTestId('game')).toBeVisible();
+  const dealDialog = page.getByRole('dialog', { name: /本局庄家判定|Dealer draw/ });
+  await expect(dealDialog).toBeVisible();
+  await dealDialog.getByRole('button', { name: /确认并发牌|Confirm and deal/ }).click();
+  if (options.waitForFirstTurn !== false) {
+    await expect(page.getByTestId('game')).toHaveAttribute('data-phase', /draw|play/);
+  }
 }
 
 /**

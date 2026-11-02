@@ -14,6 +14,31 @@ const VIEWPORTS = [
   { name: 'portrait', width: 390, height: 844 },
 ];
 
+test('横屏矮屏判庄弹窗的确认按钮始终可见', async ({ page }) => {
+  await page.setViewportSize({ width: 844, height: 390 });
+  await openCleanHomeWithSeed(page, 10);
+  await page.getByRole('button', { name: /开始对局|Start Game/ }).click();
+
+  const dialog = page.getByRole('dialog', { name: /本局庄家判定|Dealer draw/ });
+  const confirm = dialog.getByRole('button', { name: /确认并发牌|Confirm and deal/ });
+  await expect(dialog).toBeVisible();
+  await expect(confirm).toBeVisible();
+
+  const viewport = page.viewportSize();
+  const dialogBox = await dialog.boundingBox();
+  const confirmBox = await confirm.boundingBox();
+  expect(viewport).not.toBeNull();
+  expect(dialogBox).not.toBeNull();
+  expect(confirmBox).not.toBeNull();
+  if (viewport === null || dialogBox === null || confirmBox === null) return;
+  expect(dialogBox.y).toBeGreaterThanOrEqual(0);
+  expect(dialogBox.y + dialogBox.height).toBeLessThanOrEqual(viewport.height + 1);
+  expect(confirmBox.y + confirmBox.height).toBeLessThanOrEqual(viewport.height + 1);
+
+  await confirm.click();
+  await expect(page.getByTestId('game')).toHaveAttribute('data-phase', 'play');
+});
+
 for (const vp of VIEWPORTS) {
   test(`canvas 已绘制内容 · ${vp.name}`, async ({ page }) => {
     await page.setViewportSize({ width: vp.width, height: vp.height });
@@ -77,6 +102,48 @@ test('对局状态通过 data-* 暴露，摸牌后进入 play 阶段', async ({ 
   await expect(game).toHaveAttribute('data-hand-count', '11');
 });
 
+test('判庄牌渲染为牌面且庄家首轮出牌会播放动画', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openCleanHomeWithSeed(page, 10);
+  await page.getByRole('button', { name: /开始对局|Start Game/ }).click();
+
+  const dealDialog = page.getByRole('dialog', { name: /本局庄家判定|Dealer draw/ });
+  await expect(dealDialog).toBeVisible();
+  await expect(dealDialog.getByTestId('starter-card')).toBeVisible();
+  expect(await dealDialog.getByTestId('starter-card').textContent()).not.toContain('D6');
+  await dealDialog.getByRole('button', { name: /确认并发牌|Confirm and deal/ }).click();
+
+  const game = page.getByTestId('game');
+  await expect(game).toHaveAttribute('data-phase', 'play');
+  await expect(game).toHaveAttribute('data-turn', 'player');
+  await expect(game).toHaveAttribute('data-hand-count', '10');
+
+  const canvas = page.getByTestId('game-canvas');
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  if (box === null) return;
+  const getHandFace = async (cardId: string): Promise<{ x: number; y: number }> => {
+    const raw = await canvas.getAttribute('data-hand-faces');
+    const faces = JSON.parse(raw ?? '[]') as Array<{ cardId: string; x: number; y: number }>;
+    const face = faces.find((item) => item.cardId === cardId);
+    if (face === undefined) throw new Error(`手牌中找不到 ${cardId}`);
+    return { x: face.x, y: face.y };
+  };
+
+  for (const cardId of ['H7', 'S7', 'D7']) {
+    const face = await getHandFace(cardId);
+    await page.mouse.click(box.x + face.x, box.y + face.y);
+  }
+  await expect(game).toHaveAttribute('data-selected-count', '3');
+  const before = Number(await canvas.getAttribute('data-animation-count'));
+  const actionX = Number(await canvas.getAttribute('data-action-primary-x'));
+  const actionY = Number(await canvas.getAttribute('data-action-primary-y'));
+  expect(Number.isFinite(actionX) && Number.isFinite(actionY)).toBe(true);
+  await page.mouse.click(box.x + actionX, box.y + actionY);
+  await expect(game).toHaveAttribute('data-hand-count', '7');
+  await expect.poll(async () => Number(await canvas.getAttribute('data-animation-count'))).toBeGreaterThan(before);
+});
+
 test('点击手牌会选中一张牌（语义状态可读）', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await openCleanHomeWithSeed(page);
@@ -86,7 +153,9 @@ test('点击手牌会选中一张牌（语义状态可读）', async ({ page }) 
   await clickDeck(page);
   await page.waitForTimeout(300);
 
-  // 读取手牌首牌中心坐标，点击选中
+  // 读取手牌首牌中心坐标，点击选中，并验证可观察语义状态变化。
+  const game = page.getByTestId('game');
+  await expect(game).toHaveAttribute('data-selected-count', '0');
   const canvas = page.getByTestId('game-canvas');
   const box = await canvas.boundingBox();
   expect(box).not.toBeNull();
@@ -97,6 +166,5 @@ test('点击手牌会选中一张牌（语义状态可读）', async ({ page }) 
   await page.mouse.click(box.x + hx, box.y + hy);
   await page.waitForTimeout(200);
 
-  // 点击后不报错即可；选中态在 canvas 内部（data-selected 未暴露时此处只做冒烟）
-  expect(true).toBe(true);
+  await expect(game).toHaveAttribute('data-selected-count', '1');
 });

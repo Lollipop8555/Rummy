@@ -9,7 +9,7 @@
  */
 
 import type { Card, Intensity, Side } from './cards';
-import { appendOptions, isLegalMeld, type Meld } from './meld';
+import { appendOptions, canPlayOutHand, isLegalMeld, type Meld } from './meld';
 
 export type { Intensity };
 import type {
@@ -35,12 +35,13 @@ export type TableMeldView = {
 export type GameView = {
   readonly phase: Phase;
   readonly turn: Side;
+  readonly starter: Side;
   readonly roundIndex: number;
   readonly opponentNameIndex: number;
   readonly deckCount: number;
   readonly discard: readonly Card[];
   /**
-   * 弃牌堆中每张牌是否「可取」（取走后能立刻组成组合）。
+   * 弃牌堆中每张牌是否可取（顶牌不会导致死局；历史牌能立即成组/接牌）。
    * 仅对玩家当前回合有意义；轮到对手或非 draw 阶段时为空。
    */
   readonly discardPlayable: Readonly<Record<string, boolean>>;
@@ -56,6 +57,8 @@ export type GameView = {
   readonly intensity: Intensity;
   /** 先手判定时公开的牌 */
   readonly starterReveal: Card | null;
+  /** 判定牌仍位于牌堆顶部时公开，用于显示明牌；被摸走后立即清空。 */
+  readonly deckTopReveal: Card | null;
   /**
    * 本回合刚取到的牌 id（公开信息：这张牌是从牌堆或弃牌堆取的，双方都看得见）。
    * 规则禁止把它直接弃回弃牌堆，UI 需据此禁用该牌，AI 也据此规避。
@@ -132,9 +135,12 @@ function computeDiscardPlayable(
   const result: Record<string, boolean> = {};
   discard.forEach((card, index) => {
     const isTop = index === discard.length - 1;
-    // 弃牌堆顶牌可直接取（无需立刻成组），中间牌需立刻成组。
+    // 顶牌通常需保留其他自然牌作为弃牌；若整手牌能直接合法打完也允许取。
     if (isTop) {
-      result[card.id] = true;
+      const handAfterTake = [...hand, card];
+      result[card.id] = handAfterTake.some(
+        (candidate) => !('joker' in candidate) && candidate.id !== card.id,
+      ) || canPlayOutHand(handAfterTake);
       return;
     }
     // 指定牌与其上方的连带牌、原手牌都可参与同一组合。
@@ -178,6 +184,7 @@ export function toGameView(
   const view: GameView = {
     phase: state.phase,
     turn: state.turn,
+    starter: state.starter,
     roundIndex: state.roundIndex,
     // 只暴露张数，绝不暴露内容
     deckCount: state.deck.length,
@@ -204,6 +211,10 @@ export function toGameView(
     canUndo: state.undoStack.length > 0,
     intensity: state.intensity,
     starterReveal: state.starterReveal,
+    deckTopReveal:
+      state.starterReveal !== null && state.deck[0]?.id === state.starterReveal.id
+        ? state.starterReveal
+        : null,
     drawnCardId: state.drawnCardId,
     mustMeldCardId: state.mustMeldCardId,
   };

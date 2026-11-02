@@ -49,9 +49,16 @@ export default function App() {
     setSoundEnabled(profile.soundOn);
   }, [profile.soundOn]);
 
-  const handleRatingChange = useCallback((delta: number) => {
+  const handleRatingChange = useCallback((delta: number, matchId?: string) => {
     setProfile((prev) => {
-      const next = { ...prev, rating: prev.rating + delta };
+      if (matchId !== undefined && prev.settledMatchId === matchId) {
+        return prev;
+      }
+      const next = {
+        ...prev,
+        rating: prev.rating + delta,
+        settledMatchId: matchId ?? prev.settledMatchId,
+      };
       saveProfile(next);
       return next;
     });

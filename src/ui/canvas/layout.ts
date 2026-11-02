@@ -356,10 +356,11 @@ function computeStacked(
 ): TableLayout {
   const { view, width, height } = input;
 
-  // 公共栏高度 = 一张牌高 + 少量内边距，不参与剩余空间分配（Design 2.1）
+  // 公共栏继续使用基准牌尺寸；仅玩家手牌放大，不影响牌堆、弃牌与桌面组合。
   const publicH = card.h + PAD * 2;
-  // 手牌区高度 = 牌高的 70%（牌完整绘制，底部 30% 溢出屏幕被裁掉）
-  const handH = Math.round(card.h * 0.7);
+  const handCard = scaledHandCard(card);
+  // 手牌区高度跟随放大后的手牌尺寸，底部仍保留少量裁切感。
+  const handH = Math.round(handCard.h * 0.7);
 
   // 纵向：topbar / GAP / zoneAi / GAP / zonePublic / GAP / zoneMine / GAP / hand / PAD
   const fixed = topbar.h + publicH + handH + GAP * 4 + PAD;
@@ -390,7 +391,7 @@ function computeStacked(
     h: handH,
   };
 
-  const hand = layoutHand(input, handArea, card);
+  const hand = layoutHand(input, handArea, handCard);
   return {
     mode: 'stacked',
     width,
@@ -424,7 +425,8 @@ function computeColumns(
 ): TableLayout {
   const { view, width, height } = input;
 
-  const handH = Math.round(card.h * 0.7);
+  const handCard = scaledHandCard(card);
+  const handH = Math.round(handCard.h * 0.7);
   const bodyY = topbar.h + GAP;
   // 纵向：topbar / GAP / body / GAP / hand / PAD
   const bodyH = height - bodyY - handH - GAP - PAD;
@@ -453,7 +455,7 @@ function computeColumns(
     h: handH,
   };
 
-  const hand = layoutHand(input, handArea, card);
+  const hand = layoutHand(input, handArea, handCard);
   return {
     mode: 'columns',
     width,
@@ -612,6 +614,14 @@ function layoutHandActions(
     : null;
 
   return { actionPrimary: primary, actionSecondary: secondary };
+}
+
+/** 仅用于玩家手牌的尺寸倍率；牌堆、弃牌堆、对手手牌和桌面组合保持基准尺寸。 */
+const HAND_CARD_SCALE = 1.22;
+
+function scaledHandCard(card: CardSize): CardSize {
+  const w = Math.round(card.w * HAND_CARD_SCALE);
+  return { w, h: Math.round(w * 1.42), radius: Math.round(w * 0.09) };
 }
 
 /**
@@ -823,7 +833,9 @@ export function hitTest(
       const wy = face.y + oy;
       if (px >= wx && px <= wx + face.w && py >= wy && py <= wy + face.h) {
         if (i === dv.cards.length - 1) {
-          return { kind: 'button', id: 'discard-top' };
+          return face.highlight === true
+            ? { kind: 'button', id: 'discard-top' }
+            : null;
         }
         // 中间牌：只有「可深层收取（能立刻成组）」才可点击，
         // 否则返回 null（不可选），避免误选无法成组的深层牌。

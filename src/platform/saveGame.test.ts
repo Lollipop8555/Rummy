@@ -66,9 +66,18 @@ describe('存档往返', () => {
   });
 
   it('读档后继续摸牌，序列与未中断时一致', () => {
-    const base = createGame({ seed: 99, intensity: 2 });
+    const pending = createGame({ seed: 99, intensity: 2 });
+    const deal = reduce(pending, { type: 'confirmDeal' });
+    if (!deal.ok) throw new Error('发牌失败');
+    const dealer = deal.state.turn;
+    const discarded = reduce(deal.state, {
+      type: 'discard',
+      cardId: deal.state.hands[dealer].find((card) => card.kind === 'normal')?.id ?? '',
+    });
+    if (!discarded.ok) throw new Error('庄家首轮弃牌失败');
+    const base = discarded.state;
     const step1 = reduce(base, { type: 'drawDeck' });
-    if (!step1.ok) throw new Error('前置失败');
+    if (!step1.ok) throw new Error('摸牌前置失败');
     saveGame(step1.state);
 
     const loaded = loadGame();
@@ -82,14 +91,17 @@ describe('存档往返', () => {
     const direct = reduce(base, { type: 'drawDeck' });
     if (!direct.ok) throw new Error('对照失败');
 
-    expect(cont2.state.hands.player.map((c) => c.id)).toEqual(
-      direct.state.hands.player.map((c) => c.id),
+    expect(cont2.state.hands[base.turn].map((card) => card.id)).toEqual(
+      direct.state.hands[base.turn].map((card) => card.id),
     );
   });
 
   it('牌数守恒：任意时刻为 54', () => {
     const state = createGame({ seed: 7 });
     expect(countAllCards(state)).toBe(DECK_SIZE);
+    const dealt = reduce(state, { type: 'confirmDeal' });
+    expect(dealt.ok).toBe(true);
+    if (dealt.ok) expect(countAllCards(dealt.state)).toBe(DECK_SIZE);
   });
 
   it('版本不兼容时丢弃，不返回状态', () => {

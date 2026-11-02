@@ -266,7 +266,12 @@ function planDrawPhase(view: GameView, intensity: Intensity): AiPlan {
   // AI 会取了牌却不用，转手弃掉另一张，导致同一张牌在双方之间来回搬运、
   // 对局永不收敛（自对弈曾因此无法结束）。
   const top = view.discard[view.discard.length - 1];
-  if (top !== undefined && intensity >= 1 && !isJoker(top)) {
+  if (
+    top !== undefined &&
+    view.discardPlayable[top.id] === true &&
+    intensity >= 1 &&
+    !isJoker(top)
+  ) {
     const virtualHand = [...view.me.cards, top];
     if (
       canUseImmediately(virtualHand, top, view) &&
@@ -277,7 +282,10 @@ function planDrawPhase(view: GameView, intensity: Intensity): AiPlan {
     }
   }
 
-  // 深层收取：L5 才考虑；指定牌必须即时打出，仅上方牌计入连带成本。
+  // 深层收取：L5 才考虑；指定牌必须即时使用。
+  // 限制 AI 评估时最多连带 3 张，避免对整段弃牌历史运行指数级手牌拆解。
+  // 这是 AI 搜索深度限制，不限制玩家按规则进行深层收取。
+  const MAX_AI_DEEP_CARRY = 3;
   if (intensity >= 5 && view.discard.length > 1) {
     for (let i = view.discard.length - 2; i >= 0; i -= 1) {
       const candidate = view.discard[i];
@@ -285,15 +293,18 @@ function planDrawPhase(view: GameView, intensity: Intensity): AiPlan {
         continue;
       }
       const taken = view.discard.slice(i);
-      const cost = taken
-        .slice(1)
-        .reduce((sum, card) => sum + handValue(card), 0);
-      const virtualHand = [...view.me.cards, ...taken.slice(1)];
+      const incoming = taken.slice(1);
+      if (incoming.length > MAX_AI_DEEP_CARRY) {
+        continue;
+      }
+      const available = [...view.me.cards, ...incoming, candidate];
+      if (!canUseImmediately(available, candidate, view)) {
+        continue;
+      }
+      const cost = incoming.reduce((sum, card) => sum + handValue(card), 0);
+      const virtualHand = [...view.me.cards, ...incoming];
       const gain = handPlanScore(virtualHand) - baseline;
-      if (
-        gain > cost + 5 &&
-        canUseImmediately([...view.me.cards, ...taken], candidate, view)
-      ) {
+      if (gain > cost + 5) {
         moves.push({ type: 'takeDiscardDeep', cardId: candidate.id });
         return { moves, score: gain - cost };
       }

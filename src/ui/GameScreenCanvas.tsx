@@ -269,6 +269,7 @@ export function GameScreenCanvas({
       data-hand-count={view.me.cards.length}
       data-opponent-count={view.opponentHandCount}
       data-deck-count={view.deckCount}
+      data-selected-count={selected.length}
       data-can-undo={view.canUndo ? 'true' : 'false'}
     >
       <div className="game-canvas-stage">
@@ -406,6 +407,56 @@ export function GameScreenCanvas({
                 </span>
               </button>
             ))}
+          </div>
+        </Dialog>
+      )}
+
+      {view.phase === 'dealReveal' && (
+        <Dialog
+          className="dialog--deal"
+          title={t('deal.title')}
+          actions={
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={() => doAction({ type: 'confirmDeal' })}
+            >
+              {t('deal.confirm')}
+            </button>
+          }
+        >
+          <div className="deal-reveal" data-testid="deal-reveal">
+            <span className="deal-reveal__label">{t('deal.reveal')}</span>
+            {view.starterReveal !== null && (
+              <div
+                className={`deal-reveal__card${view.starterReveal.kind === 'joker' ? ' deal-reveal__card--joker' : ''}${view.starterReveal.kind === 'normal' && (view.starterReveal.suit === 'H' || view.starterReveal.suit === 'D') ? ' deal-reveal__card--red' : ''}`}
+                role="img"
+                aria-label={view.starterReveal.kind === 'joker'
+                  ? t(view.starterReveal.joker === 'big' ? 'deal.bigJoker' : 'deal.smallJoker')
+                  : `${suitSymbol(view.starterReveal.suit)}${rankLabel(view.starterReveal.rank)}`}
+                data-testid="starter-card"
+              >
+                {view.starterReveal.kind === 'joker' ? (
+                  <>
+                    <span className="deal-reveal__corner">JOKER</span>
+                    <span className="deal-reveal__center">★</span>
+                    <span className="deal-reveal__footer">{t(view.starterReveal.joker === 'big' ? 'deal.bigJoker' : 'deal.smallJoker')}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="deal-reveal__corner">
+                      <span>{rankLabel(view.starterReveal.rank)}</span>
+                      <span>{suitSymbol(view.starterReveal.suit)}</span>
+                    </span>
+                    <span className="deal-reveal__center">{suitSymbol(view.starterReveal.suit)}</span>
+                  </>
+                )}
+              </div>
+            )}
+            <p className="deal-reveal__starter">
+              {t(view.starter === 'player' ? 'deal.playerStarts' : 'deal.opponentStarts')}
+            </p>
+            <p className="deal-reveal__rules">{t('deal.rules')}</p>
           </div>
         </Dialog>
       )}

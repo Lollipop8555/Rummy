@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DECK_SIZE, normalCard } from './cards';
+import { DECK_SIZE, normalCard, otherSide } from './cards';
 import { asRuns } from './meld';
 import {
   createGame,
@@ -13,21 +13,50 @@ import { jokerCard } from './cards';
 
 const SEED = 12345;
 
+/** 测试夹具：发完开局手牌后进入普通取牌回合，绕过庄家首回合操作。 */
 function newGame(seed = SEED): GameState {
-  return createGame({ seed });
+  const pending = createGame({ seed });
+  const dealt = reduce(pending, { type: 'confirmDeal' });
+  if (!dealt.ok) throw new Error('初始发牌失败');
+  return { ...dealt.state, phase: 'draw' };
 }
 
 describe('发牌与开局', () => {
+  it('判定牌展示确认后庄家先发，判定牌留在牌堆顶', () => {
+    const pending = createGame({ seed: SEED });
+    expect(pending.phase).toBe('dealReveal');
+    expect(pending.hands.player).toHaveLength(0);
+    expect(pending.hands.ai).toHaveLength(0);
+    const reveal = pending.deck[0];
+    expect(reveal?.id).toBe(pending.starterReveal?.id);
+
+    const dealt = reduce(pending, { type: 'confirmDeal' });
+    expect(dealt.ok).toBe(true);
+    if (!dealt.ok) return;
+    expect(dealt.state.phase).toBe('play');
+    expect(dealt.state.hands.player).toHaveLength(10);
+    expect(dealt.state.hands.ai).toHaveLength(10);
+    expect(dealt.state.deck[0]?.id).toBe(reveal?.id);
+    expect(dealt.state.deck.slice(1)).toEqual(pending.deck.slice(21));
+    expect(toGameView(dealt.state, { side: 'player' }).deckTopReveal?.id).toBe(reveal?.id);
+    expect(reduce(dealt.state, { type: 'drawDeck' }).ok).toBe(false);
+    expect(dealt.state.hands[dealt.state.starter][0]?.id).toBe(pending.deck[1]?.id);
+    expect(dealt.state.hands[otherSide(dealt.state.starter)][0]?.id).toBe(pending.deck[2]?.id);
+    expect(
+      dealt.state.deck.length + dealt.state.hands.player.length + dealt.state.hands.ai.length,
+    ).toBe(DECK_SIZE);
+  });
+
   it('发牌后双方各 10 张，牌数守恒 54', () => {
-    const state = newGame();
+    const pending = createGame({ seed: SEED });
+    const result = reduce(pending, { type: 'confirmDeal' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const state = result.state;
     expect(state.hands.player).toHaveLength(10);
     expect(state.hands.ai).toHaveLength(10);
-    const total =
-      state.deck.length +
-      state.discard.length +
-      state.hands.player.length +
-      state.hands.ai.length;
-    // 先手判定牌已放回牌堆，故总数为 54
+    const total = state.deck.length + state.discard.length +
+      state.hands.player.length + state.hands.ai.length;
     expect(total).toBe(DECK_SIZE);
   });
 
@@ -46,6 +75,67 @@ describe('发牌与开局', () => {
     expect(a.hands.player.map((c) => c.id)).not.toEqual(
       b.hands.player.map((c) => c.id),
     );
+  });
+});
+
+describe('同一局内轮次与庄家轮换', () => {
+  function dealtPlayerDealer(): GameState {
+    const pending = createGame({ seed: 10, matchId: 'match-stable' });
+    const dealt = reduce(pending, { type: 'confirmDeal' });
+    if (!dealt.ok) throw new Error('判庄发牌失败');
+    expect(dealt.state.starter).toBe('player');
+    return dealt.state;
+  }
+
+  it('确认轮末后不再判庄，直接轮换庄家并发牌进入 play', () => {
+    const initial = dealtPlayerDealer();
+    const roundEnd: GameState = {
+      ...initial,
+      phase: 'roundEnd',
+      lastRound: {
+        playerTableScore: 0,
+        aiTableScore: 0,
+        playerHandScore: 0,
+        aiHandScore: 0,
+        playerRoundScore: 0,
+        aiRoundScore: 0,
+        reason: 'noLegalMove',
+      },
+    };
+
+    const next = reduce(roundEnd, { type: 'confirmRound' });
+    expect(next.ok).toBe(true);
+    if (!next.ok) return;
+    expect(next.state.matchId).toBe(initial.matchId);
+    expect(next.state.roundIndex).toBe(initial.roundIndex + 1);
+    expect(next.state.starter).toBe('ai');
+    expect(next.state.turn).toBe('ai');
+    expect(next.state.phase).toBe('play');
+    expect(next.state.starterReveal).toBeNull();
+    expect(next.state.hands.player).toHaveLength(10);
+    expect(next.state.hands.ai).toHaveLength(10);
+    expect(reduce(next.state, { type: 'confirmDeal' }).ok).toBe(false);
+  });
+
+  it('达到目标分后的平局加赛仍沿用同一局并轮换庄家', () => {
+    const initial = dealtPlayerDealer();
+    const matchEndDraw: GameState = {
+      ...initial,
+      phase: 'matchEnd',
+      playerTotal: 500,
+      aiTotal: 500,
+      lastMatch: { playerTotal: 500, aiTotal: 500, outcome: 'draw' },
+    };
+
+    const overtime = reduce(matchEndDraw, { type: 'confirmMatch' });
+    expect(overtime.ok).toBe(true);
+    if (!overtime.ok) return;
+    expect(overtime.state.matchId).toBe(initial.matchId);
+    expect(overtime.state.starter).toBe('ai');
+    expect(overtime.state.phase).toBe('play');
+    expect(overtime.state.lastMatch).toBeNull();
+    expect(overtime.state.playerTotal).toBe(500);
+    expect(overtime.state.aiTotal).toBe(500);
   });
 });
 
@@ -409,6 +499,47 @@ describe('撤销', () => {
 });
 
 describe('无合法动作', () => {
+  it('取顶牌后可与手中王牌成组出完时允许取牌', () => {
+    const state = newGame();
+    const custom: GameState = {
+      ...state,
+      phase: 'draw',
+      turn: 'player',
+      deck: [],
+      hands: {
+        ...state.hands,
+        player: [normalCard('S', 5), normalCard('S', 6), jokerCard('big')],
+      },
+      discard: [normalCard('S', 7)],
+      table: [],
+    };
+    const view = toGameView(custom, { side: 'player' });
+    expect(view.discardPlayable.S7).toBe(true);
+
+    const taken = reduce(custom, { type: 'takeDiscardTop' });
+    expect(taken.ok).toBe(true);
+    if (!taken.ok) return;
+    const melded = reduce(taken.state, {
+      type: 'meld',
+      cardIds: ['S5', 'S6', 'S7', 'JOKER_BIG'],
+    });
+    expect(melded.ok).toBe(true);
+    if (melded.ok) expect(melded.state.phase).toBe('roundEnd');
+  });
+  it('王牌顶牌将导致无可弃动作时禁止取回', () => {
+    const state = newGame();
+    const custom: GameState = {
+      ...state,
+      phase: 'draw',
+      turn: 'player',
+      hands: { ...state.hands, player: [jokerCard('big')] },
+      discard: [jokerCard('small')],
+      table: [],
+    };
+    const view = toGameView(custom, { side: 'player' });
+    expect(view.discardPlayable.JOKER_SMALL).toBe(false);
+    expect(reduce(custom, { type: 'takeDiscardTop' }).ok).toBe(false);
+  });
   it('手牌仅剩王牌且不可接牌时判定卡死', () => {
     const state = newGame();
     const custom: GameState = {
@@ -443,7 +574,9 @@ describe('GameView 信息公平', () => {
     const view = toGameView(state, { side: 'ai' });
     expect(view.deckCount).toBe(state.deck.length);
     expect(Object.keys(view)).not.toContain('deck');
-    expect(JSON.stringify(view)).not.toContain(state.deck[0]?.id ?? '__none__');
+    // 判定牌是公开信息；其余牌堆牌面不能出现在视图中。
+    expect(view.deckTopReveal?.id).toBe(state.starterReveal?.id);
+    expect(JSON.stringify(view)).not.toContain(state.deck[1]?.id ?? '__none__');
   });
 
   it('对手只有张数，没有手牌内容', () => {

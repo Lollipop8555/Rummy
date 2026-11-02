@@ -11,6 +11,8 @@ export type Profile = {
   readonly rating: number;
   readonly language: Language;
   readonly soundOn: boolean;
+  /** 最近已结算的对局 ID，用于跨刷新防止重复加减分。 */
+  readonly settledMatchId: string | null;
 };
 
 const PROFILE_KEY = 'rummy.profile.v1';
@@ -20,6 +22,7 @@ export function defaultProfile(): Profile {
     rating: 0,
     language: detectLanguage(),
     soundOn: true,
+    settledMatchId: null,
   };
 }
 
@@ -42,10 +45,14 @@ export function loadProfile(): Profile {
       typeof stored.rating === 'number' && Number.isFinite(stored.rating)
         ? stored.rating
         : base.rating,
-    language: stored.language === 'en' || stored.language === 'zh'
-      ? stored.language
-      : base.language,
-    soundOn: typeof stored.soundOn === 'boolean' ? stored.soundOn : base.soundOn,
+    language:
+      stored.language === 'en' || stored.language === 'zh'
+        ? stored.language
+        : base.language,
+    soundOn:
+      typeof stored.soundOn === 'boolean' ? stored.soundOn : base.soundOn,
+    settledMatchId:
+      typeof stored.settledMatchId === 'string' ? stored.settledMatchId : null,
   };
 }
 
@@ -53,6 +60,17 @@ export function saveProfile(profile: Profile): void {
   writeJson(PROFILE_KEY, profile);
 }
 
-export function withRating(profile: Profile, delta: number): Profile {
-  return { ...profile, rating: profile.rating + delta };
+export function withRating(
+  profile: Profile,
+  delta: number,
+  matchId?: string,
+): Profile {
+  if (matchId !== undefined && profile.settledMatchId === matchId) {
+    return profile;
+  }
+  return {
+    ...profile,
+    rating: profile.rating + delta,
+    settledMatchId: matchId ?? profile.settledMatchId,
+  };
 }

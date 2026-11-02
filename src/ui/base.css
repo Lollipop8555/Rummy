@@ -121,6 +121,92 @@ button {
   margin: 0;
 }
 
+.deal-reveal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap-s);
+  text-align: center;
+}
+
+.deal-reveal__label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.deal-reveal__card {
+  position: relative;
+  width: clamp(88px, 26vw, 116px);
+  aspect-ratio: 0.704;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid rgba(22, 33, 29, 0.2);
+  border-radius: 11px;
+  background: linear-gradient(145deg, #fffef9, #e9e5d9);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.38), inset 0 0 0 3px rgba(22, 33, 29, 0.04);
+  color: #17211d;
+}
+
+.deal-reveal__card--red {
+  color: #c93632;
+}
+
+.deal-reveal__card--joker {
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.38), inset 0 0 0 3px rgba(217, 169, 58, 0.65);
+}
+
+.deal-reveal__corner {
+  position: absolute;
+  top: 7px;
+  left: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: clamp(17px, 5vw, 22px);
+  font-weight: 800;
+  line-height: 0.94;
+}
+
+.deal-reveal__corner span + span {
+  font-size: 0.88em;
+}
+
+.deal-reveal__center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: clamp(43px, 13vw, 58px);
+  opacity: 0.88;
+}
+
+.deal-reveal__footer {
+  position: absolute;
+  inset: auto 0 12px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+/* 判庄弹窗的操作按钮保持独立可见，不随正文一起滚出视口。 */
+.dialog--deal {
+  min-height: 0;
+}
+
+.dialog--deal > .dialog__title,
+.dialog--deal > .dialog__actions {
+  flex: 0 0 auto;
+}
+
+.dialog--deal > .deal-reveal {
+  min-height: 0;
+}
+
+.deal-reveal__starter,
+.deal-reveal__rules {
+  margin: 0;
+}
+
 .dialog__actions {
   display: flex;
   gap: var(--gap-s);
@@ -461,6 +547,129 @@ button {
   }
 }
 
+@media (orientation: landscape) and (max-height: 560px) {
+  .overlay:has(.dialog--deal) {
+    padding: 6px;
+  }
+
+  .dialog--deal {
+    width: min(680px, 100%);
+    max-height: calc(100dvh - 12px);
+    padding: 8px 14px;
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .dialog--deal .dialog__title {
+    font-size: 16px;
+    line-height: 1.1;
+  }
+
+  .dialog--deal > .deal-reveal {
+    flex: 1 1 auto;
+    display: grid;
+    grid-template-columns: 62px minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 3px;
+    overflow: hidden;
+    text-align: left;
+  }
+
+  .dialog--deal .deal-reveal__label {
+    grid-column: 1;
+    grid-row: 1;
+    font-size: 10px;
+  }
+
+  .dialog--deal .deal-reveal__card {
+    grid-column: 1;
+    grid-row: 2 / 4;
+    width: 58px;
+    align-self: center;
+    justify-self: center;
+    border-radius: 6px;
+  }
+
+  .dialog--deal .deal-reveal__corner {
+    top: 4px;
+    left: 5px;
+    font-size: 12px;
+  }
+
+  .dialog--deal .deal-reveal__center {
+    font-size: 30px;
+  }
+
+  .dialog--deal .deal-reveal__footer {
+    bottom: 5px;
+    font-size: 8px;
+  }
+
+  .dialog--deal .deal-reveal__starter {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
+    font-size: 12px;
+    line-height: 1.2;
+  }
+
+  .dialog--deal .deal-reveal__rules {
+    grid-column: 2;
+    grid-row: 2 / 4;
+    align-self: stretch;
+    overflow-y: auto;
+    font-size: 10px;
+    line-height: 1.25;
+  }
+
+  .dialog--deal .dialog__actions .button {
+    min-height: 36px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 380px) {
+  .overlay:has(.dialog--deal) {
+    padding: 3px;
+  }
+
+  .dialog--deal {
+    max-height: calc(100dvh - 6px);
+    padding: 5px 10px;
+    gap: 4px;
+  }
+
+  .dialog--deal > .deal-reveal {
+    grid-template-columns: 48px minmax(0, 1fr);
+    column-gap: 8px;
+  }
+
+  .dialog--deal .deal-reveal__card {
+    width: 44px;
+    border-radius: 4px;
+  }
+
+  .dialog--deal .deal-reveal__corner {
+    top: 3px;
+    left: 3px;
+    font-size: 9px;
+  }
+
+  .dialog--deal .deal-reveal__center {
+    font-size: 22px;
+  }
+
+  .dialog--deal .deal-reveal__footer {
+    bottom: 3px;
+    font-size: 6px;
+  }
+
+  .dialog--deal .dialog__actions .button {
+    min-height: 32px;
+  }
+}
+
 @media (max-width: 380px) {
   .dialog--round-result {
     padding: 16px;
@@ -641,13 +850,6 @@ button {
   margin: 0;
 }
 
-.home__subtitle {
-  margin: -8px 0 0;
-  font-size: 12.5px;
-  color: var(--muted);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
 
 .home__card {
   width: min(340px, 100%);

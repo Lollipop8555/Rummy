@@ -20,6 +20,7 @@ import {
 } from './cards';
 import {
   appendOptions,
+  canPlayOutHand,
   isMeldFull,
   meldValue,
   resolveMelds,
@@ -33,9 +34,10 @@ import {
   type MeldOwner,
 } from './scoring';
 
-export const ENGINE_VERSION = 2;
+export const ENGINE_VERSION = 3;
 
 export type Phase =
+  | 'dealReveal' // 开局公开判庄牌，等待用户确认发牌
   | 'draw' // 等待当前玩家取牌
   | 'play' // 已取牌，可亮牌/接牌/弃牌
   | 'roundEnd' // 一轮结束，等待确认
@@ -68,6 +70,8 @@ export type MatchResult = {
 
 export type GameState = {
   readonly version: number;
+  /** 本局稳定唯一标识，用于局末积分结算幂等。 */
+  readonly matchId: string;
   readonly phase: Phase;
   readonly turn: Side;
   /** 先手方，用于轮末交换 */
@@ -108,16 +112,6 @@ export type GameState = {
 
 // ------------------------------------------------------------ 构造
 
-function splitHands(
-  deck: readonly Card[],
-): [Record<Side, Card[]>, Card[]] {
-  const playerHand = deck.slice(0, HAND_SIZE);
-  const aiHand = deck.slice(HAND_SIZE, HAND_SIZE * 2);
-  return [
-    { player: playerHand, ai: aiHand },
-    deck.slice(HAND_SIZE * 2),
-  ];
-}
 
 /**
  * 判定先手：抽牌看奇偶。
@@ -134,20 +128,22 @@ export function judgeStarter(card: Card): Side {
 export type NewGameOptions = {
   readonly seed: number;
   readonly intensity?: Intensity;
+  readonly matchId?: string;
 };
 
 export function createGame(options: NewGameOptions): GameState {
   const [shuffled, rng] = shuffle(makeDeck(), options.seed);
   const reveal = shuffled[0];
   const starter = reveal === undefined ? 'player' : judgeStarter(reveal);
-  const [hands, rest] = splitHands(shuffled);
+  const hands: Record<Side, Card[]> = { player: [], ai: [] };
 
   return {
     version: ENGINE_VERSION,
-    phase: 'draw',
+    matchId: options.matchId ?? `seed-${String(options.seed)}`,
+    phase: 'dealReveal',
     turn: starter,
     starter,
-    deck: rest,
+    deck: shuffled,
     discard: [],
     hands,
     table: [],
@@ -170,6 +166,7 @@ export function createGame(options: NewGameOptions): GameState {
 // ------------------------------------------------------------ 动作
 
 export type Action =
+  | { readonly type: 'confirmDeal' }
   | { readonly type: 'drawDeck' }
   | { readonly type: 'takeDiscardTop' }
   | { readonly type: 'takeDiscardDeep'; readonly cardId: string }
@@ -244,8 +241,49 @@ function nextTurn(side: Side): Side {
   return otherSide(side);
 }
 
+type DealtHands = {
+  readonly hands: Record<Side, Card[]>;
+  readonly remainingDeck: Card[];
+};
+
+function dealHands(deck: readonly Card[], dealer: Side): DealtHands {
+  const hands: Record<Side, Card[]> = { player: [], ai: [] };
+  let cursor = 0;
+  for (let cardIndex = 0; cardIndex < HAND_SIZE; cardIndex += 1) {
+    for (const side of [dealer, otherSide(dealer)] as const) {
+      const card = deck[cursor];
+      if (card !== undefined) {
+        hands[side].push(card);
+        cursor += 1;
+      }
+    }
+  }
+  return { hands, remainingDeck: [...deck.slice(cursor)] };
+}
+
+function dealRevealedHands(state: GameState): GameState {
+  const reveal = state.starterReveal;
+  const dealingDeck = reveal === null
+    ? state.deck
+    : state.deck.filter((card) => card.id !== reveal.id);
+  const { hands, remainingDeck } = dealHands(dealingDeck, state.starter);
+  return {
+    ...state,
+    phase: 'play',
+    turn: state.starter,
+    hands,
+    // 仅新一局判庄；判定牌回到牌堆顶并保持公开。
+    deck: [ ...(reveal === null ? [] : [reveal]), ...remainingDeck ],
+  };
+}
+
 export function reduce(state: GameState, action: Action): ReduceResult {
   switch (action.type) {
+    case 'confirmDeal':
+      if (state.phase !== 'dealReveal') {
+        return fail('当前阶段不能确认发牌');
+      }
+      return ok(dealRevealedHands(state));
     case 'drawDeck':
       return doDraw(state);
     case 'takeDiscardTop':
@@ -307,9 +345,17 @@ function doTakeDiscardTop(state: GameState): ReduceResult {
     return fail('弃牌堆为空');
   }
   const side = state.turn;
-  // 规则：取弃牌堆顶牌**不需要**立刻成组（可像摸牌一样正常取）。
-  // 但只要是「从弃牌堆取的牌」，本回合一律禁止弃回（drawnCardId 标记）。
+  // 顶牌允许直接取，但不能把玩家带入无法弃牌/出牌的死局。
+  // 新取牌本回合禁止弃回，因此模拟取牌后必须仍有其他自然牌可弃，
+  // 或至少有一张王牌能接入桌面组合。
   const nextHand = [...handOf(state, side), top];
+  const hasDiscardableNatural = nextHand.some(
+    (card) => !isJoker(card) && card.id !== top.id,
+  );
+  const canPlayOutWithoutDiscard = !hasDiscardableNatural && canPlayOutHand(nextHand);
+  if (!hasDiscardableNatural && !canPlayOutWithoutDiscard) {
+    return fail('取走该牌后将没有合法弃牌动作');
+  }
   const next: GameState = {
     ...state,
     discard: state.discard.slice(0, topIndex),
@@ -620,20 +666,22 @@ function doConfirmMatch(state: GameState): ReduceResult {
 
 function startNextRound(state: GameState): GameState {
   const [shuffled, rng] = shuffle(makeDeck(), state.rng);
-  const [hands, rest] = splitHands(shuffled);
   const starter = nextTurn(state.starter);
+  const { hands, remainingDeck } = dealHands(shuffled, starter);
   return {
     ...state,
-    phase: 'draw',
+    // 同一局的后续轮次不再判庄；庄家轮换后直接先出牌。
+    phase: 'play',
     turn: starter,
     starter,
-    deck: rest,
+    deck: remainingDeck,
     discard: [],
     hands,
     table: [],
     roundIndex: state.roundIndex + 1,
     rng,
     lastRound: null,
+    lastMatch: null,
     undoStack: [],
     drewThisTurn: false,
     starterReveal: null,
@@ -690,19 +738,56 @@ export function hasLegalMove(state: GameState): boolean {
   if (state.phase === 'play') {
     const side = state.turn;
     const hand = handOf(state, side);
-    if (hand.some((card) => !isJoker(card))) {
-      return true;
-    }
-    // 只剩王牌：能接就还能动，否则卡死
-    return hand.some((card) =>
-      state.table.some((item) => appendOptions(item.meld, card).length > 0),
+    const canDiscard = hand.some(
+      (card) => !isJoker(card) && card.id !== state.drawnCardId,
     );
+    const canLayOffJoker = hand.some(
+      (card) => isJoker(card) && state.table.some(
+        (item) => appendOptions(item.meld, card).length > 0,
+      ),
+    );
+    return canDiscard || canLayOffJoker;
+  }
+  if (state.phase === 'dealReveal') {
+    return false;
   }
   if (state.phase === 'draw') {
     if (state.deck.length > 0) {
       return true;
     }
-    return state.discard.length > 0;
+    if (state.discard.length === 0) {
+      return false;
+    }
+    const side = state.turn;
+    const hand = handOf(state, side);
+    const top = state.discard[state.discard.length - 1];
+    if (top !== undefined) {
+      const afterTop = [...hand, top];
+      if (
+        afterTop.some((card) => !isJoker(card) && card.id !== top.id) ||
+        canPlayOutHand(afterTop)
+      ) {
+        return true;
+      }
+    }
+    for (let index = state.discard.length - 2; index >= 0; index -= 1) {
+      const target = state.discard[index];
+      if (target === undefined) continue;
+      const available = [...hand, ...state.discard.slice(index + 1)];
+      for (let i = 0; i < available.length; i += 1) {
+        for (let j = i + 1; j < available.length; j += 1) {
+          const a = available[i];
+          const b = available[j];
+          if (a !== undefined && b !== undefined && resolveMelds([target, a, b]).length > 0) {
+            return true;
+          }
+        }
+      }
+      if (state.table.some((item) => appendOptions(item.meld, target).length > 0)) {
+        return true;
+      }
+    }
+    return false;
   }
   return false;
 }

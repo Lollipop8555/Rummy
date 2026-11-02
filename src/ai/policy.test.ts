@@ -27,7 +27,10 @@ type SimResult = {
 };
 
 function simulate(seed: number, intensity: Intensity): SimResult {
-  let state: GameState = createGame({ seed, intensity });
+  const pending = createGame({ seed, intensity });
+  const initialDeal = reduce(pending, { type: 'confirmDeal' });
+  if (!initialDeal.ok) throw new Error('初始发牌失败');
+  let state: GameState = initialDeal.state;
   let steps = 0;
   let illegalMoves = 0;
   let stuckAtEmptyHand = false;
@@ -41,6 +44,13 @@ function simulate(seed: number, intensity: Intensity): SimResult {
       continue;
     }
     if (state.phase === 'matchEnd') {
+      if (state.lastMatch?.outcome === 'draw') {
+        const overtime = reduce(state, { type: 'confirmMatch' });
+        if (!overtime.ok) break;
+        state = overtime.state;
+        steps += 1;
+        continue;
+      }
       break;
     }
 
@@ -143,9 +153,8 @@ describe('AI 自对弈', () => {
       const result = simulate(31337, 5);
       expect(result.illegalMoves).toBe(0);
     },
-    // L5 会枚举深层收取方案，单次决策远慢于低档位；
-    // 这属于性能特征而非缺陷，故放宽超时。
-    60_000,
+    // L5 只对最多 3 张连带牌做深取评估；该上限避免整段弃牌历史导致组合搜索爆炸。
+    10_000,
   );
 
   it('多个 seed 下均能推进且无非法动作（无死锁）', () => {
@@ -184,7 +193,10 @@ describe('强度映射', () => {
 
 describe('牌数守恒', () => {
   it('任意时刻总牌数为 54', () => {
-    let state = createGame({ seed: 555 });
+    const pending = createGame({ seed: 555 });
+    const initialDeal = reduce(pending, { type: 'confirmDeal' });
+    if (!initialDeal.ok) throw new Error('初始发牌失败');
+    let state = initialDeal.state;
     for (let step = 0; step < 60; step += 1) {
       const total =
         state.deck.length +

@@ -62,6 +62,8 @@ export type DrawInput = {
   readonly layout: TableLayout;
   readonly dpr: number;
   readonly scroll: ScrollState;
+  /** 仍位于牌堆顶的公开判定牌。 */
+  readonly deckTopReveal?: Card | null;
   /** 正在飞行的牌（最上层绘制；静态层跳过同 id 的牌，避免重影） */
   readonly flying?: readonly FlyingCard[];
   readonly topbarText: {
@@ -548,7 +550,7 @@ function drawTopbar(
 }
 
 export function drawTable(ctx: CanvasRenderingContext2D, input: DrawInput): void {
-  const { layout, dpr, topbarText, scroll } = input;
+  const { layout, dpr, topbarText, scroll, deckTopReveal } = input;
   const { width, height, card } = layout;
   // 飞行中的牌 id：静态层跳过这些牌，避免与飞行层重影。
   // 牌面未知（对手摸牌）的飞行牌没有 id，不参与跳过。
@@ -621,7 +623,19 @@ export function drawTable(ctx: CanvasRenderingContext2D, input: DrawInput): void
       ctx.stroke();
       ctx.setLineDash([]);
     } else {
-      drawCardBack(ctx, d.x, d.y, d.w, d.h, card.radius, !topbarText.deckEnabled);
+      if (deckTopReveal !== null && deckTopReveal !== undefined) {
+        drawCardFace(ctx, {
+          card: deckTopReveal,
+          x: d.x,
+          y: d.y,
+          w: d.w,
+          h: d.h,
+          sideways: layout.mode === 'columns',
+          radius: card.radius,
+        });
+      } else {
+        drawCardBack(ctx, d.x, d.y, d.w, d.h, card.radius, !topbarText.deckEnabled);
+      }
       if (topbarText.deckEnabled) {
         roundRect(ctx, d.x - 2, d.y - 2, d.w + 4, d.h + 4, card.radius + 2);
         ctx.strokeStyle = COLOR_MINE;

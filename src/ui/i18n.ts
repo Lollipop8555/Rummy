@@ -10,7 +10,6 @@ export type TextKey = keyof typeof zh;
 
 const zh = {
   'app.title': 'Rummy',
-  'app.subtitle': '在线单机版',
 
   'home.start': '开始对局',
   'home.continue': '继续对局',
@@ -98,6 +97,15 @@ const zh = {
   'joker.chooseTarget': '选择王牌模拟的牌',
   'joker.chooseSuit': '选择王牌模拟的花色',
 
+  'deal.title': '本局庄家判定',
+  'deal.reveal': '翻出的判定牌',
+  'deal.bigJoker': '大王',
+  'deal.smallJoker': '小王',
+  'deal.playerStarts': '本局由你先手。',
+  'deal.opponentStarts': '本局由对手先手。',
+  'deal.rules': '判定牌放回牌堆顶并保持明牌。确认后庄家先发，双方交替各发 10 张；庄家直接用这 10 张手牌出牌，首回合不摸牌。之后每回合再先摸牌。',
+  'deal.confirm': '确认并发牌',
+
   'hint.mustDrawFirst': '需要先摸牌',
   'hint.mustMeld': '先亮出包含该牌的组合',
   'hint.notPlayable': '这张牌无法组成组合或接牌',
@@ -112,7 +120,6 @@ const zh = {
 
 const en: Record<TextKey, string> = {
   'app.title': 'Rummy',
-  'app.subtitle': 'Single-player',
 
   'home.start': 'Start Game',
   'home.continue': 'Continue',
@@ -199,6 +206,15 @@ const en: Record<TextKey, string> = {
 
   'joker.chooseTarget': "Choose the card this joker imitates",
   'joker.chooseSuit': 'Choose the suit this joker imitates',
+
+  'deal.title': 'Dealer draw',
+  'deal.reveal': 'Dealer card',
+  'deal.bigJoker': 'Big Joker',
+  'deal.smallJoker': 'Small Joker',
+  'deal.playerStarts': 'You act first this match.',
+  'deal.opponentStarts': 'Your opponent acts first this match.',
+  'deal.rules': 'The revealed card returns face up to the top of the deck. After confirmation, the dealer deals first, alternating 10 cards each. The dealer plays directly from those 10 cards without drawing; normal turns draw first afterward.',
+  'deal.confirm': 'Confirm and deal',
 
   'hint.mustDrawFirst': 'Draw a card first',
   'hint.mustMeld': 'Meld a set containing that card first',

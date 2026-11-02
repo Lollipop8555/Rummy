@@ -57,7 +57,6 @@ export function HomeScreen({
       </button>
 
       <h1 className="home__title">{t('app.title')}</h1>
-      <p className="home__subtitle">{t('app.subtitle')}</p>
 
       <div className="home__card">
         <div className="home__row">
